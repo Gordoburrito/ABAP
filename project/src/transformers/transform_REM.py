@@ -1,0 +1,42 @@
+import pandas as pd
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from transform import transform_data
+
+def transform_REM(input_file: str, golden_file: str) -> pd.DataFrame:
+    """
+    Transform REM vendor data to the standardized format.
+    
+    Args:
+        input_file: Path to REM CSV file
+        golden_file: Path to golden copy CSV file
+    """
+    # Read the input CSV
+    vendor_df = pd.read_csv(input_file)
+    
+    # Print columns to debug
+    print("Original columns:", vendor_df.columns.tolist())
+    
+    # Clean and rename columns
+    vendor_df = vendor_df.rename(columns={
+        'Inventory ID': 'SKU',
+        ' Level-3 ': 'Price',  # Note the space at the end
+        'Description': 'Description'
+    })
+    
+    # Print columns after rename to debug
+    print("Columns after rename:", vendor_df.columns.tolist())
+    
+    # Clean price column - remove '$' and convert to float
+    vendor_df['Price'] = vendor_df['Price'].str.strip().str.replace('$', '').str.strip().astype(float)
+    
+    # Read golden copy
+    golden_df = pd.read_csv(golden_file)
+    
+    # Transform the data using the common transformer
+    return transform_data(golden_df, vendor_df)
+
+if __name__ == "__main__":
+    result_df = transform_REM('./data/samples/REM_sample.csv', './data/golden.csv')
+    print(result_df.head())
