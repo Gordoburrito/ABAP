@@ -1,20 +1,9 @@
 import pandas as pd
-from pydantic import BaseModel, Field
 from typing import Optional
 from openai import OpenAI
 import os
 from dotenv import load_dotenv
-
-class ProductData(BaseModel):
-    title: str = Field(description="Title of the part/ product")
-    year_min: int = Field(description="Minimum year of vehicle compatibility")
-    year_max: int = Field(description="Maximum year of vehicle compatibility")
-    make: str = Field(description="Make of the vehicle compatibility")
-    model: str = Field(description="Model of the vehicle compatibility")
-    mpn: str = Field(description="Manufacturer Part Number (SKU)")
-    cost: float = Field(description="Vendor cost amount")
-    price: float = Field(description="Suggested retail price")
-    body_html: str = Field(description="Long description of the product including features, compatibility, and benefits")
+from models.product_data import ProductData
 
 def extract_product_data_with_ai(row: pd.Series, golden_df: pd.DataFrame, client: OpenAI) -> ProductData:
     """
@@ -37,21 +26,24 @@ def extract_product_data_with_ai(row: pd.Series, golden_df: pd.DataFrame, client
     product_info = "\n".join([f"{key}: {value}" for key, value in row.items() if pd.notna(value)])
 
     prompt = f"""Based on this product information, determine the car details and create a product description.
-    Choose ONLY from the provided valid options.
+    If the product is compatible with ALL makes, models, or years, indicate this by using "ALL" for that field.
+    If specific options are required, choose ONLY from the provided valid options.
     
     Product Information:
     {product_info}
     
     Valid Options:
-    Makes: {valid_makes}
-    Models: {valid_models}
-    Years: {valid_years}
+    Makes: {valid_makes} (or "ALL" if compatible with all makes)
+    Models: {valid_models} (or "ALL" if compatible with all models)
+    Years: {valid_years} (or "ALL" if compatible with all years)
+    
+    Note: Use "ALL" when the product is universally compatible for that category.
     """
     
     response = client.beta.chat.completions.parse(
         model="gpt-4o-mini",
         messages=[
-            {"role": "system", "content": "Extract the product information based on the valid options provided."},
+            {"role": "system", "content": "Extract the product information based on the valid options provided. Use 'ALL' for universal compatibility."},
             {"role": "user", "content": prompt}
         ],
         response_format=ProductData,
@@ -59,11 +51,6 @@ def extract_product_data_with_ai(row: pd.Series, golden_df: pd.DataFrame, client
     )
     
     product_data = response.choices[0].message.parsed
-
-    # Update with actual cost and price
-    # product_data.mpn = row['SKU']
-    # product_data.cost = float(row['Price'])
-    # product_data.price = product_data.cost * 1.4
     
     return product_data
 

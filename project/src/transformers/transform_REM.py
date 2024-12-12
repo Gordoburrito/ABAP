@@ -39,4 +39,10 @@ def transform_REM(input_file: str, golden_file: str) -> pd.DataFrame:
 
 if __name__ == "__main__":
     result_df = transform_REM('./data/samples/REM_sample.csv', './data/golden.csv')
-    print(result_df.head())
+    print(result_df)
+    
+    # Save the result to CSV
+    output_path = './data/transformed/REM_transformed.csv'
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)  # Create directory if it doesn't exist
+    result_df.to_csv(output_path, index=False)
+    print(f"Transformed data saved to: {output_path}")
