@@ -44,7 +44,7 @@ def format_product_data_to_ABAP(product_df, golden_df):
         # Create ABAP format row
         abap_row = {
             "Title": row["title"],
-            "(Internal) Car ID - Expanded": ", ".join(car_ids),
+            "Tag": ", ".join(car_ids),
             "MPN": row["mpn"],
             "Cost": row["cost"],
             "Price": row["price"],

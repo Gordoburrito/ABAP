@@ -54,7 +54,7 @@ def extract_product_data_with_ai(row: pd.Series, golden_df: pd.DataFrame, client
     
     return product_data
 
-def transform_data(golden_df: pd.DataFrame, vendor_df: pd.DataFrame) -> pd.DataFrame:
+def transform_data_with_ai(golden_df: pd.DataFrame, vendor_df: pd.DataFrame) -> pd.DataFrame:
     """
     Transform vendor data to required format, validating against golden copy.
     """
