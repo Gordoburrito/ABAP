@@ -1,16 +1,30 @@
 import pytest
 import pandas as pd
 from pathlib import Path
-from src.format_product_data_to_ABAP import format_product_data_to_ABAP
+from src.format_product_data_to_ABAP import format_product_data_to_ABAP, get_year_range, expand_all_models
+from src.extract_golden_df import load_golden_df
+
+def test_get_year_range():
+    year_min = "1960"
+    year_max = "1965"
+    assert get_year_range(year_min, year_max) == ["1960", "1961", "1962", "1963", "1964", "1965"]
+
+def test_expand_all_models():
+    golden_df = load_golden_df()
+    year = "1964"
+    make = "Plymouth"
+    models = expand_all_models(year, make, golden_df)
+    assert sorted(list(models)) == sorted(["Valiant", "Savoy", "Fury", "Belvedere", "Barracuda"])
+
 
 def test_transform_product_data():
     # Read input files
     project_root = Path(__file__).parent.parent
     product_data = pd.read_csv(project_root / "data/samples/product_data_samp.csv")
-    golden_data = pd.read_csv(project_root / "data/golden.csv")
 
-    # Transform the data
-    result = format_product_data_to_ABAP(product_data, golden_data)
+    # Format the data
+    golden_df = load_golden_df()
+    result = format_product_data_to_ABAP(product_data, golden_df)
 
     # Verify key columns exist and have expected format
     assert "Tag" in result.columns
@@ -25,7 +39,7 @@ def test_transform_product_data():
                    '1965_Plymouth_Satellite', '1965_Plymouth_Fury III', '1965_Plymouth_Fury II', 
                    '1965_Plymouth_Fury', '1965_Plymouth_Belvedere II', '1965_Plymouth_Belvedere', 
                    '1965_Plymouth_Barracuda']
-    assert car_ids == expected_ids
+    assert sorted(car_ids) == sorted(expected_ids)
 
     # Check year range expansion
     satellite_row = result[result["Title"].str.contains("66/70 Satellite")].iloc[0]
