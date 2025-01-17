@@ -3,14 +3,14 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from transform import transform_data_with_ai
+from src.extract_golden_df import load_master_ultimate_golden_df
 
-def transform_REM(input_file: str, golden_file: str) -> pd.DataFrame:
+def transform_REM(input_file: str) -> pd.DataFrame:
     """
     Transform REM vendor data to the standardized format.
     
     Args:
         input_file: Path to REM CSV file
-        golden_file: Path to golden copy CSV file
     """
     # Read the input CSV
     vendor_df = pd.read_csv(input_file)
@@ -32,13 +32,13 @@ def transform_REM(input_file: str, golden_file: str) -> pd.DataFrame:
     vendor_df['Price'] = vendor_df['Price'].str.strip().str.replace('$', '').str.strip().astype(float)
     
     # Read golden copy
-    golden_df = pd.read_csv(golden_file)
+    golden_df = load_master_ultimate_golden_df()
     
     # Transform the data using the common transformer
     return transform_data_with_ai(golden_df, vendor_df)
 
 if __name__ == "__main__":
-    result_df = transform_REM('./data/samples/REM_sample.csv', './data/golden.csv')
+    result_df = transform_REM('./data/REM.csv')
     print(result_df)
     
     # Save the result to CSV

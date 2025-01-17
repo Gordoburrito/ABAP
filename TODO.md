@@ -10,6 +10,10 @@ TODO:
 - do I need to do that?
 
 
+### REM
+refactor extract_data_with_ai to use load_golden_data
+
+
 ### Newark 
 - is not Tidy data
   - needs to handle the multiple models in its model column. 

@@ -44,11 +44,17 @@ def test_transform_product_data():
     # Check year range expansion
     satellite_row = result[result["Title"].str.contains("66/70 Satellite")].iloc[0]
     car_ids = satellite_row["Tag"].split(", ")
+    print(car_ids)
     expected_ids = [
         "1966_Plymouth_Satellite",
+        "1966_Plymouth_Belvedere",
         "1967_Plymouth_Satellite",
+        "1967_Plymouth_Belvedere",
         "1968_Plymouth_Satellite",
+        "1968_Plymouth_Belvedere",
         "1969_Plymouth_Satellite",
+        "1969_Plymouth_Belvedere",
         "1970_Plymouth_Satellite",
+        "1970_Plymouth_Belvedere",
     ]
     assert car_ids == expected_ids
