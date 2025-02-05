@@ -21,7 +21,8 @@ def test_load_golden_df():
 def test_load_master_ultimate_golden_df():
     df = load_master_ultimate_golden_df()
     # Check DataFrame structure
-    expected_columns = ["car_id", "year", "make", "model", "engine"]
+    print(df.head())
+    expected_columns = ["car_id", "year", "make", "model", "engine", "engine_ids", "engine_readable"]
     assert isinstance(df, pd.DataFrame)
     assert list(df.columns) == expected_columns
     assert len(df) > 0  # Ensure the DataFrame is not empty
@@ -32,3 +33,6 @@ def test_load_master_ultimate_golden_df():
     assert len(df['make'].unique()) == 426
     assert len(df['model'].unique()) == 6844
     assert len(df['engine'].unique()) == 3031
+    # These should two below be the same right?
+    assert len(df['engine_ids'].unique()) == 1097
+    assert len(df['engine_readable'].unique()) == 1399

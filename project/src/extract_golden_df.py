@@ -22,7 +22,9 @@ def load_master_ultimate_golden_df() -> tuple:
         'Year': 'year',
         'Make': 'make',
         'Model': 'model',
-        'Engine': 'engine'
+        'Engine': 'engine',
+        'Engine Tag': 'engine_ids',
+        'Human Readable': 'engine_readable'
     }
 
     return pd.read_csv(
