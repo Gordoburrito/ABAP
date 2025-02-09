@@ -24,7 +24,7 @@ def load_master_ultimate_golden_df() -> tuple:
         'Model': 'model',
         'Engine': 'engine',
         'Engine Tag': 'engine_ids',
-        'Human Readable': 'engine_readable'
+        'Human Readable': 'engine_readable',
     }
 
     return pd.read_csv(
