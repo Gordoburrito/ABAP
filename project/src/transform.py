@@ -61,12 +61,16 @@ def extract_product_data_with_ai(row: pd.Series, golden_df: pd.DataFrame, client
          * "34/64" → "1934-1964"
          * "48/49" → "1948-1949"
          * "62/74" → "1962-1974"
+         * "49/50 Plymouth 4 Door Sedan Door Boards 4pc" → "1949-1950"
+         * "78/90 Plymouth Horizon Hood Insulation 1pc" → "1978-1990"
        - Convert single years  to full years using patterns like:
          * "25" → "1925-1925",
          * "39" → "1939-1939", 
          * "64" → "1964-1964",
+         * "39 Plymouth Sedan Kick Panels w/Binding" → "1939-1939"
+         * "63 Plymouth Pushbutton Transmission Dust cover 1pc" → "1963-1963"
        - Do not extend ranges beyond what is specified.
-       - If no valid year can be deduced, use "NONE".
+       - If no valid year can be deduced, use "1800-1800".
        
     4. Invalid Options:
        - Use "NONE" if no valid option matches the category.
