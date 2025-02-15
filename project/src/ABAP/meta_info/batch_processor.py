@@ -40,23 +40,49 @@ def create_batch_tasks(df):
     tasks = []
 
     for index, row in df.iterrows():
-        # Combine relevant product data into a context string
+        # Clean and format features from available data
+        specifications = [
+            f"SKU: {row['SKU']}",
+            f"MPN: {row['MPN']}" if pd.notna(row['MPN']) else None,
+            f"Weight: {row['Weight']}" if pd.notna(row['Weight']) else None,
+            f"Product Type: {row['Product Type']}" if pd.notna(row['Product Type']) else None,
+        ]
+        specifications = [spec for spec in specifications if spec is not None]
+
+        # Extract vehicle compatibility from tags
+        vehicle_compatibility = row['Tag'].split(', ') if pd.notna(row['Tag']) else []
+
         product_context = f"""
-        Product Name: {row['product_name']}
-        Category: {row['category']}
-        Price: {row['price']}
-        Features: {row['features']}
-        Specifications: {row['specifications']}
+        Product Name: {row['Title']}
+        Category: {row['Collection']}
+        Price: ${row['Price']}
+        
+        Features:
+        - {row['Body HTML'] if pd.notna(row['Body HTML']) else 'no description provided'}
+        
+        Specifications:
+        {chr(10).join(f"- {spec}" for spec in specifications)}
+        
+        Vehicle Compatibility:
+        {chr(10).join(f"- {vehicle}" for vehicle in vehicle_compatibility[:5])}
+        {f'... and {len(vehicle_compatibility) - 5} more vehicles' if len(vehicle_compatibility) > 5 else ''}
         """
+        print("--------------------------------")
+        print("product_seo_prompt")
+        print(product_seo_prompt)
+        print("--------------------------------")
+        print("product_context")
+        print(product_context)
+        print("--------------------------------")
 
         task = {
             "custom_id": f"task-{index}",
             "method": "POST",
             "url": "/v1/chat/completions",
             "body": {
-                "model": "gpt-4o-mini",
+                "model": "gpt-4-turbo-preview",
                 "temperature": 0.7,
-                "response_format": ProductSEOOutput,
+                "response_format": {"type": "json_object"},
                 "messages": [
                     {"role": "system", "content": product_seo_prompt},
                     {"role": "user", "content": product_context},
@@ -70,7 +96,7 @@ def create_batch_tasks(df):
 
 def process_batch():
     # Load product data
-    df = pd.read_csv("data/product_data.csv")
+    df = pd.read_csv("src/ABAP/meta_info/data/SAMPLE ABAP - MASTER IMPORT FILE.csv")
 
     # Create batch tasks
     tasks = create_batch_tasks(df)
