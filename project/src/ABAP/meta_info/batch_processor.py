@@ -4,12 +4,13 @@ import pandas as pd
 import json
 from openai import OpenAI
 from pathlib import Path
+from datetime import datetime
 
 class ProductSEOOutput(BaseModel):
-    meta_title: str = Field(..., max_length=60)
-    meta_description: str = Field(..., max_length=160)
+    meta_title: str = Field(..., max_length=60, description="MAX 57 characters")
+    meta_description: str = Field(..., max_length=160, description="MAX 157 characters")
     product_description: str = Field(
-        ..., description="HTML formatted product description"
+        ..., description="HTML formatted product description (NO anchor tags)"
     )
 
 # Define the system prompt
@@ -17,13 +18,7 @@ product_seo_prompt = """
 You are a professional e-commerce content writer and SEO specialist. Your task is to generate optimized content for product pages.
 
 For each product, create:
-1. A meta title (max 60 characters) that is compelling and includes key product features
-2. A meta description (exactly 160 characters) that drives clicks and summarizes key benefits
-3. A beautifully formatted product description using HTML that includes:
-   - Opening paragraph highlighting key benefits
-   - Bullet points of features
-   - Technical specifications where relevant
-   - Call to action
+I'm building descriptions for my ecommerce website that sells vintage auto parts for dodge, Chrysler, Desoto and Plymouth cars. I'll provide you a title of the part, the vehicle it fits, the category of part it is and any engine data (if applicable). I'd like you write me a full product description, a meta title (max 60 characters) and a meta description (limited to 160 characters) for each product
 
 Output must be valid JSON in this format:
 {
@@ -42,9 +37,6 @@ def create_batch_tasks(df):
     for index, row in df.iterrows():
         # Clean and format features from available data
         specifications = [
-            f"SKU: {row['SKU']}",
-            f"MPN: {row['MPN']}" if pd.notna(row['MPN']) else None,
-            f"Weight: {row['Weight']}" if pd.notna(row['Weight']) else None,
             f"Product Type: {row['Product Type']}" if pd.notna(row['Product Type']) else None,
         ]
         specifications = [spec for spec in specifications if spec is not None]
@@ -53,19 +45,14 @@ def create_batch_tasks(df):
         vehicle_compatibility = row['Tag'].split(', ') if pd.notna(row['Tag']) else []
 
         product_context = f"""
-        Product Name: {row['Title']}
+        Title: {row['Title']}
         Category: {row['Collection']}
-        Price: ${row['Price']}
         
         Features:
         - {row['Body HTML'] if pd.notna(row['Body HTML']) else 'no description provided'}
         
-        Specifications:
-        {chr(10).join(f"- {spec}" for spec in specifications)}
-        
-        Vehicle Compatibility:
-        {chr(10).join(f"- {vehicle}" for vehicle in vehicle_compatibility[:5])}
-        {f'... and {len(vehicle_compatibility) - 5} more vehicles' if len(vehicle_compatibility) > 5 else ''}
+        Fitment:
+        {", ".join(f"{vehicle}" for vehicle in vehicle_compatibility)}
         """
         print("--------------------------------")
         print("product_seo_prompt")
@@ -128,7 +115,11 @@ def process_batch():
 
 def process_results(batch_job_id):
     client = OpenAI()
-
+    
+    # Load original dataframe
+    df = pd.read_csv("src/ABAP/meta_info/data/SAMPLE ABAP - MASTER IMPORT FILE.csv")
+    df = df.reset_index().rename(columns={'index': 'original_index'})  # Keep track of original indices
+    
     # Retrieve batch job
     batch_job = client.batches.retrieve(batch_job_id)
 
@@ -141,26 +132,48 @@ def process_results(batch_job_id):
     with open(result_file_name, "wb") as file:
         file.write(result)
 
-    # Process results and validate with Pydantic
+    # Process results and create a results dataframe
     processed_results = []
     with open(result_file_name, "r") as file:
         for line in file:
             result = json.loads(line.strip())
             task_id = result["custom_id"]
+            # Extract the index from task-{index} format
+            original_index = int(task_id.split('-')[1])
             content = json.loads(
                 result["response"]["body"]["choices"][0]["message"]["content"]
             )
 
-            # Validate with Pydantic model
-            validated_content = ProductSEOOutput(**content)
+            try:
+                validated_content = ProductSEOOutput(**content)
+                processed_results.append({
+                    "original_index": original_index,
+                    **validated_content.model_dump()
+                })
+            except Exception as validation_error:
+                print(f"Validation error for task {task_id}: {validation_error}")
+                processed_results.append({
+                    "original_index": original_index,
+                    **content,
+                    "validation_error": str(validation_error)
+                })
 
-            processed_results.append(
-                {"task_id": task_id, **validated_content.model_dump()}
-            )
+    # Create DataFrame from results and merge with original
+    results_df = pd.DataFrame(processed_results)
+    merged_df = pd.merge(
+        df,
+        results_df,
+        on='original_index',
+        how='left',
+        suffixes=('', '_generated')
+    )
+    
+    return merged_df
 
-    return processed_results
 
-
-def save_results_to_csv(results):
-    df = pd.DataFrame(results)
-    df.to_csv("data/processed_products.csv", index=False)
+def save_results_to_csv(results_df):
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    results_df.to_csv(
+        f"src/ABAP/meta_info/data/processed/processed_products_{timestamp}.csv", 
+        index=False
+    )
