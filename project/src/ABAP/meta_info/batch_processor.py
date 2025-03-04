@@ -43,16 +43,21 @@ def create_batch_tasks(df):
 
         # Extract vehicle compatibility from tags
         vehicle_compatibility = row['Tag'].split(', ') if pd.notna(row['Tag']) else []
+        engine_compatibility = row['Metafield: custom.engine_types [single_line_text_field]'] if pd.notna(row['Metafield: custom.engine_types [single_line_text_field]']) else []
+        include_description = row['AI Description Editor'] == 'x'
+
+        # TODO: add metafield custom_engine_types
 
         product_context = f"""
         Title: {row['Title']}
         Category: {row['Collection']}
         
         Features:
-        - {row['Body HTML'] if pd.notna(row['Body HTML']) else 'no description provided'}
+        - {row['Body HTML'] if pd.notna(row['Body HTML'] and include_description) else 'no description provided'}
         
         Fitment:
         {", ".join(f"{vehicle}" for vehicle in vehicle_compatibility)}
+        {f"Engine Fitment: {', '.join(f'{engine}' for engine in engine_compatibility)}" if engine_compatibility else ''}
         """
         print("--------------------------------")
         print("product_seo_prompt")
@@ -67,7 +72,7 @@ def create_batch_tasks(df):
             "method": "POST",
             "url": "/v1/chat/completions",
             "body": {
-                "model": "gpt-4-turbo-preview",
+                "model": "gpt-4o-mini",
                 "temperature": 0.7,
                 "response_format": {"type": "json_object"},
                 "messages": [
@@ -83,7 +88,7 @@ def create_batch_tasks(df):
 
 def process_batch():
     # Load product data
-    df = pd.read_csv("src/ABAP/meta_info/data/SAMPLE ABAP - MASTER IMPORT FILE.csv")
+    df = pd.read_csv("src/ABAP/meta_info/data/raw/ABAP - MASTER IMPORT FILE - Products (2).csv")
 
     # Create batch tasks
     tasks = create_batch_tasks(df)
@@ -117,7 +122,7 @@ def process_results(batch_job_id):
     client = OpenAI()
     
     # Load original dataframe
-    df = pd.read_csv("src/ABAP/meta_info/data/SAMPLE ABAP - MASTER IMPORT FILE.csv")
+    df = pd.read_csv("src/ABAP/meta_info/data/raw/ABAP - MASTER IMPORT FILE - Products (2).csv")
     df = df.reset_index().rename(columns={'index': 'original_index'})  # Keep track of original indices
     
     # Retrieve batch job
