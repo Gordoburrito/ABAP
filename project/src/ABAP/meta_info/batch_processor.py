@@ -15,10 +15,12 @@ class ProductSEOOutput(BaseModel):
 
 # Define the system prompt
 product_seo_prompt = """
-You are a professional e-commerce content writer and SEO specialist. Your task is to generate optimized content for product pages.
+You are a professional e-commerce technical content writer and SEO specialist. Your task is to generate optimized content for product pages to inform the customer what the product does. Respond as a trusted mechanic.
 
 For each product, create:
-I'm building descriptions for my ecommerce website that sells vintage auto parts for dodge, Chrysler, Desoto and Plymouth cars. I'll provide you a title of the part, the vehicle it fits, the category of part it is and any engine data (if applicable). I'd like you write me a full product description, a meta title (max 60 characters) and a meta description (limited to 160 characters) for each product
+I'm building descriptions for my ecommerce website for vintage auto parts for dodge, Chrysler, Desoto and Plymouth cars. I'll provide you a title of the part, the vehicle it fits, the category of part it is and any engine data (if applicable). I'd like you write me a full product description, a meta title and a meta description (limited to 160 characters) for each product . I'd like you to use the voice of a trusted neighborly mechanic that isn't trying to sell the product, but rather just explain it's usefulness in an informative way. Where possible highlight how to install, why it's useful and the quality of the product. Try to be brief
+
+For the description make it as short as possible without losing any context related to what's included in the parts and instructions to the customer if applicable. If it includes multiple parts, list those in bullet points after the shortened description
 
 Output must be valid JSON in this format:
 {
@@ -26,6 +28,45 @@ Output must be valid JSON in this format:
     "meta_description": "string",
     "product_description": "string with HTML markup"
 }
+
+# Mopar Product Naming & Description Guidelines
+
+## **General Rules**
+- **MOPAR** should be written as **Mopar**.
+- **Mopar Cars** include all makes: **Chrysler, DeSoto, Dodge, and Plymouth**.
+- **Year range** should reflect the earliest and oldest year for that product.
+- **Vehicle make** should list **all applicable makes** for the product.
+
+## **Vintage vs. Classic**
+- **Vintage:** 1949 or earlier
+- **Classic:** 1950 and after
+- **Usage Examples:**
+  - **Vintage Mopar Car** – before 1949
+  - **Classic Mopar Car** – after 1950
+  - **Vintage & Classic Mopar Cars** – when covering both time periods
+
+## **Meta Titles**
+- **Google typically displays 50-60 characters, but can index up to 70 characters.**
+- **Do not exceed 70 characters.**
+- **Ensure uniformity in titles.**
+- **Titles should start with the product name.**
+
+### **Title Formatting Examples**
+✅ **Correct:**
+- `Cowl Vent Gasket for 1939 Chrysler, DeSoto, and Plymouth`
+❌ **Incorrect:**
+- `1939 Cowl Vent Gasket for Chrysler, DeSoto, and Plymouth`
+
+✅ **Correct:**
+- `Cowl Vent Gasket Rubber for 1928 - 1961 Vintage Dodge & Mopar`
+❌ **Incorrect:**
+- `Cowl Vent Gasket Rubber for Vintage Dodge & MOPAR`
+
+✅ **Shortened Title:**
+- `Cowl Vent Gasket for 1928 - 1961 Vintage Dodge & Mopar`
+
+✅ **Include Specific Makes:
+
 
 Make the content engaging, professional, and optimized for both users and search engines.
 """
@@ -54,8 +95,6 @@ def create_batch_tasks(df):
         
         Features:
         - {row['Body HTML'] if pd.notna(row['Body HTML'] and include_description) else 'no description provided'}
-        
-        Fitment:
         {", ".join(f"{vehicle}" for vehicle in vehicle_compatibility)}
         {f"Engine Fitment: {', '.join(f'{engine}' for engine in engine_compatibility)}" if engine_compatibility else ''}
         """
@@ -72,7 +111,7 @@ def create_batch_tasks(df):
             "method": "POST",
             "url": "/v1/chat/completions",
             "body": {
-                "model": "gpt-4o-mini",
+                "model": "gpt-4o",
                 "temperature": 0.7,
                 "response_format": {"type": "json_object"},
                 "messages": [
@@ -88,7 +127,7 @@ def create_batch_tasks(df):
 
 def process_batch():
     # Load product data
-    df = pd.read_csv("src/ABAP/meta_info/data/raw/ABAP - MASTER IMPORT FILE - Products (2).csv")
+    df = pd.read_csv("src/ABAP/meta_info/data/raw/ABAP - MASTER IMPORT FILE v3.csv")
 
     # Create batch tasks
     tasks = create_batch_tasks(df)
@@ -122,7 +161,7 @@ def process_results(batch_job_id):
     client = OpenAI()
     
     # Load original dataframe
-    df = pd.read_csv("src/ABAP/meta_info/data/raw/ABAP - MASTER IMPORT FILE - Products (2).csv")
+    df = pd.read_csv("src/ABAP/meta_info/data/raw/ABAP - MASTER IMPORT FILE v3.csv")
     df = df.reset_index().rename(columns={'index': 'original_index'})  # Keep track of original indices
     
     # Retrieve batch job
@@ -140,34 +179,62 @@ def process_results(batch_job_id):
     # Process results and create a results dataframe
     processed_results = []
     with open(result_file_name, "r") as file:
-        for line in file:
-            result = json.loads(line.strip())
-            task_id = result["custom_id"]
-            # Extract the index from task-{index} format
-            original_index = int(task_id.split('-')[1])
-            content = json.loads(
-                result["response"]["body"]["choices"][0]["message"]["content"]
-            )
-
+        for line_number, line in enumerate(file, 1):
             try:
-                validated_content = ProductSEOOutput(**content)
+                result = json.loads(line.strip())
+                task_id = result["custom_id"]
+                # Extract the index from task-{index} format
+                original_index = int(task_id.split('-')[1])
+                
+                try:
+                    content = json.loads(
+                        result["response"]["body"]["choices"][0]["message"]["content"]
+                    )
+                except json.JSONDecodeError as json_error:
+                    print(f"Error parsing content JSON for task {task_id} (line {line_number}): {json_error}")
+                    # Add the raw content as fallback
+                    raw_content = result["response"]["body"]["choices"][0]["message"]["content"]
+                    print(f"Raw content: {raw_content[:100]}...")  # Print first 100 chars for debugging
+                    processed_results.append({
+                        "original_index": original_index,
+                        "validation_error": f"JSON parse error: {json_error}",
+                        "raw_content": raw_content
+                    })
+                    continue
+
+                try:
+                    validated_content = ProductSEOOutput(**content)
+                    processed_results.append({
+                        "original_index": original_index,
+                        **validated_content.model_dump()
+                    })
+                except Exception as validation_error:
+                    print(f"Validation error for task {task_id}: {validation_error}")
+                    processed_results.append({
+                        "original_index": original_index,
+                        **content,
+                        "validation_error": str(validation_error)
+                    })
+            except json.JSONDecodeError as outer_json_error:
+                print(f"Error parsing response JSON at line {line_number}: {outer_json_error}")
+                print(f"Problematic line: {line[:100]}...")  # Print first 100 chars for debugging
+                # Add a placeholder in results to maintain indexing
                 processed_results.append({
-                    "original_index": original_index,
-                    **validated_content.model_dump()
+                    "original_index": f"error_line_{line_number}",
+                    "validation_error": f"Outer JSON parse error: {outer_json_error}",
+                    "raw_line": line
                 })
-            except Exception as validation_error:
-                print(f"Validation error for task {task_id}: {validation_error}")
-                processed_results.append({
-                    "original_index": original_index,
-                    **content,
-                    "validation_error": str(validation_error)
-                })
+                continue
 
     # Create DataFrame from results and merge with original
     results_df = pd.DataFrame(processed_results)
+    
+    # Filter out error entries before merging
+    valid_results_df = results_df[results_df["original_index"].apply(lambda x: isinstance(x, int))]
+    
     merged_df = pd.merge(
         df,
-        results_df,
+        valid_results_df,
         on='original_index',
         how='left',
         suffixes=('', '_generated')
