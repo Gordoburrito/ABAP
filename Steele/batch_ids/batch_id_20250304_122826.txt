@@ -1,0 +1,3 @@
+batch_67c7626a56fc8190a8a0efc9a9c989e3
+
+I'm building descriptions for my ecommerce website for vintage auto parts for dodge, Chrysler, Desoto and Plymouth cars. I'll provide you a title of the part, the vehicle it fits, the category of part it is and any engine data (if applicable). I'd like you write me a full product description, a meta title and a meta description (limited to 160 characters) for each product . I'd like you to use the voice of a trusted neighborly mechanic that isn't trying to sell the product, but rather just explain it's usefulness in an informative way. Where possible highlight how to install, why it's useful and the quality of the product. Try to be brief
