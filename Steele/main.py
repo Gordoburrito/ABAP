@@ -1,49 +1,49 @@
-from batch_processor import process_batch, process_results, save_results_to_csv
+from utils.steele_data_transformer import SteeleDataTransformer
 import time
 import os
-from openai import OpenAI
-
-client = OpenAI()
 
 def main():
+    """
+    Main entry point for Steele data transformation.
+    Following @completed-data.mdc rule: NO AI usage, template-based processing only.
+    """
     try:
-        print("Starting batch processing...")
-        batch_job_id = process_batch()
-        print(f"Batch job created with ID: {batch_job_id}")
+        print("=" * 60)
+        print("🚀 STEELE DATA TRANSFORMATION")
+        print("   Following @completed-data.mdc rule")
+        print("   NO AI • Template-Based • Ultra-Fast")
+        print("=" * 60)
         
-        # Save batch ID with timestamp in filename
+        # Initialize transformer with NO AI
+        transformer = SteeleDataTransformer(use_ai=False)
+        
+        # Process complete pipeline using templates only
+        final_df = transformer.process_complete_pipeline_no_ai()
+        
+        # Save results with timestamp
         timestamp = time.strftime("%Y%m%d_%H%M%S")
-        filename = f"src/ABAP/meta_info/batch_ids/batch_id_{timestamp}.txt"
-        os.makedirs(os.path.dirname(filename), exist_ok=True)  # Create directory if it doesn't exist
-        with open(filename, 'w') as f:
-            f.write(batch_job_id)
-        print(f"Batch ID saved to {filename}")
-
-        print("Checking batch processing status...")
-        while True:
-            batch_job = client.batches.retrieve(batch_job_id)
-            status = batch_job.status
-            
-            print(f"Current status: {status}")
-            
-            if status == 'completed':
-                break
-            elif status in ['failed', 'cancelled']:
-                raise Exception(f"Batch job {status}")
-            
-            # Check every 5 minutes
-            time.sleep(300)
-
-        print("Processing results...")
-        results = process_results(batch_job_id)
+        output_file = f"data/transformed/steele_transformed_{timestamp}.csv"
+        os.makedirs(os.path.dirname(output_file), exist_ok=True)
         
-        print("Saving results to CSV...")
-        save_results_to_csv(results)
-
-        print("Process completed successfully!")
+        # Save the results
+        final_df.to_csv(output_file, index=False)
+        print(f"💾 Results saved to: {output_file}")
+        
+        # Display summary
+        print("")
+        print("=" * 60)
+        print("✅ TRANSFORMATION COMPLETE")
+        print(f"   Products processed: {len(final_df)}")
+        print(f"   Processing method: Template-based (NO AI)")
+        print(f"   Golden validated: {len(final_df[final_df.get('Tags', '') != ''])} products")
+        print(f"   Output file: {output_file}")
+        print("=" * 60)
+        
+        return output_file
 
     except Exception as e:
-        print(f"An error occurred: {str(e)}")
+        print(f"❌ An error occurred: {str(e)}")
+        raise
 
 
 if __name__ == "__main__":

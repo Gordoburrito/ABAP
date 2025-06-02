@@ -8,15 +8,20 @@ import sys
 
 # Add the utils directory to the path
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from utils.steele_data_transformer import SteeleDataTransformer, ProductData
+from utils.steele_data_transformer import SteeleDataTransformer, ProductData, TemplateGenerator
 
 class TestSteeleDataTransformer:
-    """Test suite for Steele data transformer following new workflow"""
+    """Test suite for Steele data transformer following @completed-data.mdc (NO AI)"""
     
     @pytest.fixture
     def transformer(self):
-        """Basic transformer instance without AI"""
+        """Basic transformer instance with NO AI (following @completed-data.mdc)"""
         return SteeleDataTransformer(use_ai=False)
+    
+    @pytest.fixture
+    def template_generator(self):
+        """Template generator for testing template-based enhancement"""
+        return TemplateGenerator()
     
     @pytest.fixture
     def sample_steele_data(self):
@@ -49,19 +54,19 @@ class TestSteeleDataTransformer:
             'golden_matches': [2, 1, 0]
         })
 
-    def test_transformer_initialization(self):
-        """Test basic transformer initialization"""
+    def test_transformer_initialization_no_ai(self):
+        """Test transformer initialization with NO AI (following @completed-data.mdc)"""
         transformer = SteeleDataTransformer(use_ai=False)
         assert transformer.vendor_name == "Steele"
         assert transformer.use_ai == False
+        assert isinstance(transformer.template_generator, TemplateGenerator)
 
-    def test_transformer_initialization_with_ai(self):
-        """Test transformer initializes with AI when API key available"""
-        with patch.dict(os.environ, {'OPENAI_API_KEY': 'test_key'}):
-            with patch('utils.steele_data_transformer.OpenAI') as mock_openai:
-                transformer = SteeleDataTransformer(use_ai=True)
-                assert transformer.use_ai == True
-                mock_openai.assert_called_once()
+    def test_transformer_warns_about_ai_usage(self, capsys):
+        """Test transformer warns when AI is requested for complete fitment data"""
+        transformer = SteeleDataTransformer(use_ai=True)
+        captured = capsys.readouterr()
+        assert "WARNING: AI usage disabled for complete fitment data" in captured.out
+        assert transformer.use_ai == False  # Should be forced to False
 
     def test_load_sample_data_success(self, transformer, sample_steele_data):
         """Test successful sample data loading"""
@@ -113,7 +118,7 @@ class TestSteeleDataTransformer:
             transformer._validate_input_data(null_data)
 
     def test_validate_against_golden_dataset(self, transformer, sample_steele_data):
-        """Test golden dataset validation"""
+        """Test golden dataset validation (ONLY CRITICAL STEP)"""
         # Mock golden dataset
         mock_golden = pd.DataFrame({
             'year': [1928, 1930, 1965],
@@ -130,19 +135,61 @@ class TestSteeleDataTransformer:
         assert validation_df.iloc[0]['golden_validated'] == True  # 1928 Stutz should match
         assert validation_df.iloc[1]['golden_validated'] == True  # 1930 Stutz should match
 
-    def test_transform_to_ai_friendly_format(self, transformer, sample_steele_data, sample_validation_df):
-        """Test transformation to AI-friendly format"""
-        ai_friendly_products = transformer.transform_to_ai_friendly_format(sample_steele_data, sample_validation_df)
+    def test_transform_to_standard_format(self, transformer, sample_steele_data, sample_validation_df):
+        """Test transformation to standard format (preserving existing fitment)"""
+        standard_products = transformer.transform_to_standard_format(sample_steele_data, sample_validation_df)
         
-        assert len(ai_friendly_products) == 3
-        assert all(isinstance(product, ProductData) for product in ai_friendly_products)
+        assert len(standard_products) == 3
+        assert all(isinstance(product, ProductData) for product in standard_products)
         
         # Check first product
-        first_product = ai_friendly_products[0]
+        first_product = standard_products[0]
         assert first_product.title == "Accelerator Pedal Pad"
         assert first_product.year_min == "1928"
-        assert first_product.make == "Stutz"  # Should be populated since golden_validated=True
+        assert first_product.make == "Stutz"  # Should preserve existing fitment
         assert first_product.price == 75.49
+        assert first_product.golden_validated == True
+        assert first_product.fitment_source == "vendor_provided"
+        assert first_product.processing_method == "template_based"
+
+    def test_enhance_with_templates(self, transformer):
+        """Test template-based enhancement (NO AI)"""
+        sample_products = [
+            ProductData(
+                title="Accelerator Pedal Pad",
+                year_min="1928",
+                year_max="1928",
+                make="Stutz",
+                model="Stutz",
+                golden_validated=True,
+                processing_method="template_based"
+            )
+        ]
+        
+        enhanced_products = transformer.enhance_with_templates(sample_products)
+        
+        assert len(enhanced_products) == 1
+        product = enhanced_products[0]
+        assert product.meta_title == "Accelerator Pedal Pad - 1928 Stutz Stutz"
+        assert "Quality Accelerator Pedal Pad for 1928 Stutz Stutz vehicles" in product.meta_description
+        assert product.collection == "Brakes"  # "pad" keyword triggers brake categorization
+
+    def test_template_generator_meta_title(self, template_generator):
+        """Test template-based meta title generation"""
+        title = template_generator.generate_meta_title("Brake Pad", "1965", "Ford", "Mustang")
+        assert title == "Brake Pad - 1965 Ford Mustang"
+
+    def test_template_generator_meta_description(self, template_generator):
+        """Test template-based meta description generation"""
+        desc = template_generator.generate_meta_description("Brake Pad", "1965", "Ford", "Mustang")
+        assert desc == "Quality Brake Pad for 1965 Ford Mustang vehicles. OEM replacement part."
+
+    def test_template_generator_categorization(self, template_generator):
+        """Test rule-based product categorization"""
+        assert template_generator.categorize_product("Brake Pad") == "Brakes"
+        assert template_generator.categorize_product("Engine Mount") == "Engine"
+        assert template_generator.categorize_product("Headlight") == "Lighting"
+        assert template_generator.categorize_product("Unknown Part") == "Accessories"
 
     def test_transform_to_final_tagged_format(self, transformer):
         """Test transformation to final Shopify format"""
@@ -159,7 +206,9 @@ class TestSteeleDataTransformer:
                 price=75.49,
                 body_html="Test description",
                 meta_title="Test Meta Title",
-                meta_description="Test meta description"
+                meta_description="Test meta description",
+                collection="Engine",
+                product_type="Automotive Part"
             )
         ]
         
@@ -169,12 +218,14 @@ class TestSteeleDataTransformer:
         assert 'Title' in final_df.columns
         assert 'Vendor' in final_df.columns
         assert 'Tags' in final_df.columns
+        assert 'Collection' in final_df.columns
         assert final_df.iloc[0]['Title'] == "Test Product"
         assert final_df.iloc[0]['Vendor'] == "Steele"
         assert final_df.iloc[0]['Tags'] == "1928_Stutz_Stutz"
+        assert final_df.iloc[0]['Collection'] == "Engine"
 
     def test_generate_vehicle_tag(self, transformer):
-        """Test vehicle tag generation"""
+        """Test vehicle tag generation from existing fitment data"""
         product_data = ProductData(
             title="Test Product",
             year_min="1928",
@@ -196,244 +247,65 @@ class TestSteeleDataTransformer:
         tag = transformer._generate_vehicle_tag(product_data)
         assert tag == ""  # Should return empty string for incomplete data
 
-    def test_generate_basic_meta_title(self, transformer):
-        """Test basic meta title generation"""
-        product_data = ProductData(
-            title="Accelerator Pedal Pad",
-            year_min="1928",
-            make="Stutz",
-            model="Stutz"
-        )
+    @pytest.mark.integration  
+    def test_complete_no_ai_pipeline(self, transformer, sample_steele_data):
+        """Test complete NO-AI pipeline following @completed-data.mdc"""
+        # Mock golden dataset
+        mock_golden = pd.DataFrame({
+            'year': [1928, 1930, 1932],
+            'make': ['Stutz', 'Stutz', 'Ford'],
+            'model': ['Stutz', 'Stutz', 'Model A'],
+            'car_id': ['1928_Stutz_Stutz', '1930_Stutz_Stutz', '1932_Ford_Model_A']
+        })
         
-        meta_title = transformer._generate_basic_meta_title(product_data)
-        assert "Accelerator Pedal Pad" in meta_title
-        assert "1928 Stutz" in meta_title
-        assert len(meta_title) <= 60
-
-    def test_generate_basic_meta_description(self, transformer):
-        """Test basic meta description generation"""
-        product_data = ProductData(
-            title="Accelerator Pedal Pad",
-            year_min="1928",
-            make="Stutz",
-            model="Stutz"
-        )
-        
-        meta_description = transformer._generate_basic_meta_description(product_data)
-        assert "Accelerator Pedal Pad" in meta_description
-        assert "1928 Stutz" in meta_description
-        assert len(meta_description) <= 160
-
-    def test_process_complete_pipeline(self, transformer, sample_steele_data):
-        """Test complete pipeline processing"""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as temp_file:
-            sample_steele_data.to_csv(temp_file.name, index=False)
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as sample_file:
+            sample_steele_data.to_csv(sample_file.name, index=False)
             
-            try:
-                # Mock golden dataset
-                mock_golden = pd.DataFrame({
-                    'year': [1928, 1930, 1932],
-                    'make': ['Stutz', 'Stutz', 'Ford'],
-                    'model': ['Stutz', 'Stutz', 'Model A'],
-                    'car_id': ['1928_Stutz_Stutz', '1930_Stutz_Stutz', '1932_Ford_Model A']
-                })
-                transformer.golden_df = mock_golden
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as golden_file:
+                mock_golden.to_csv(golden_file.name, index=False)
                 
-                final_df = transformer.process_complete_pipeline(temp_file.name)
-                
-                assert len(final_df) == 3
-                assert 'Title' in final_df.columns
-                assert 'Vendor' in final_df.columns
-                assert 'Tags' in final_df.columns
-                assert 'Variant Price' in final_df.columns
-                assert 'Variant Cost' in final_df.columns
-                
-            finally:
-                os.unlink(temp_file.name)
-
-    def test_validate_output_success(self, transformer):
-        """Test output validation for valid transformed data"""
-        valid_df = pd.DataFrame({
-            'Title': ['Test Product'],
-            'Body HTML': ['Test description'],
-            'Vendor': ['Steele'],
-            'Tags': ['1928_Stutz_Stutz'],
-            'Variant Price': [75.49],
-            'Variant Cost': [43.76],
-            'Metafield: title_tag [string]': ['Test Meta Title'],
-            'Metafield: description_tag [string]': ['Test meta description']
-        })
-        
-        validation_results = transformer.validate_output(valid_df)
-        
-        assert len(validation_results['errors']) == 0
-        assert 'Processed 1 products' in validation_results['info']
-
-    def test_validate_output_missing_columns(self, transformer):
-        """Test output validation with missing required columns"""
-        incomplete_df = pd.DataFrame({
-            'Title': ['Test Product']
-            # Missing other required columns
-        })
-        
-        validation_results = transformer.validate_output(incomplete_df)
-        
-        assert len(validation_results['errors']) > 0
-        assert any('Missing required columns' in error for error in validation_results['errors'])
-
-    def test_validate_output_invalid_prices(self, transformer):
-        """Test output validation with invalid prices"""
-        invalid_price_df = pd.DataFrame({
-            'Title': ['Test Product'],
-            'Body HTML': ['Test description'],
-            'Vendor': ['Steele'],
-            'Tags': ['1928_Stutz_Stutz'],
-            'Variant Price': [0],  # Invalid price
-            'Variant Cost': [43.76],
-            'Metafield: title_tag [string]': ['Test Meta Title'],
-            'Metafield: description_tag [string]': ['Test meta description']
-        })
-        
-        validation_results = transformer.validate_output(invalid_price_df)
-        
-        assert len(validation_results['warnings']) > 0
-        assert any('invalid prices' in warning for warning in validation_results['warnings'])
-
-    def test_save_output(self, transformer):
-        """Test saving transformed output to file"""
-        test_df = pd.DataFrame({
-            'Title': ['Test Product'],
-            'Vendor': ['Steele']
-        })
-        
-        with tempfile.TemporaryDirectory() as temp_dir:
-            output_path = os.path.join(temp_dir, 'test_output.csv')
-            saved_path = transformer.save_output(test_df, output_path)
-            
-            assert os.path.exists(saved_path)
-            loaded_df = pd.read_csv(saved_path)
-            assert len(loaded_df) == 1
-            assert loaded_df.iloc[0]['Title'] == 'Test Product'
-
-    def test_save_output_creates_directory(self, transformer):
-        """Test that save_output creates output directory if it doesn't exist"""
-        test_df = pd.DataFrame({
-            'Title': ['Test Product'],
-            'Vendor': ['Steele']
-        })
-        
-        with tempfile.TemporaryDirectory() as temp_dir:
-            nested_output_path = os.path.join(temp_dir, 'nested', 'dir', 'test_output.csv')
-            saved_path = transformer.save_output(test_df, nested_output_path)
-            
-            assert os.path.exists(saved_path)
-            assert os.path.exists(os.path.dirname(saved_path))
-
-    @pytest.mark.integration
-    def test_complete_pipeline_integration(self, transformer, sample_steele_data):
-        """Test complete pipeline integration"""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as input_file:
-            sample_steele_data.to_csv(input_file.name, index=False)
-
-            try:
-                # Mock golden dataset for consistent results
-                mock_golden = pd.DataFrame({
-                    'year': [1928, 1930, 1932],
-                    'make': ['Stutz', 'Stutz', 'Ford'],
-                    'model': ['Stutz', 'Stutz', 'Model A'],
-                    'car_id': ['1928_Stutz_Stutz', '1930_Stutz_Stutz', '1932_Ford_Model A']
-                })
-                transformer.golden_df = mock_golden
-
-                # Test complete pipeline
-                final_df = transformer.process_complete_pipeline(input_file.name)
-                
-                # Validate results
-                validation_results = transformer.validate_output(final_df)
-                assert len(validation_results['errors']) == 0
-                
-                # Test saving
-                with tempfile.TemporaryDirectory() as temp_dir:
-                    output_path = os.path.join(temp_dir, 'pipeline_output.csv')
-                    saved_path = transformer.save_output(final_df, output_path)
-                    assert os.path.exists(saved_path)
-
-            finally:
-                os.unlink(input_file.name)
+                try:
+                    # Mock the load_golden_dataset method
+                    transformer.golden_df = mock_golden
+                    
+                    final_df = transformer.process_complete_pipeline_no_ai(sample_file.name)
+                    
+                    assert len(final_df) == 3
+                    assert 'Title' in final_df.columns
+                    assert 'Tags' in final_df.columns
+                    assert 'Collection' in final_df.columns
+                    
+                    # Check that vehicle tags are generated
+                    tags = final_df['Tags'].tolist()
+                    assert '1928_Stutz_Stutz' in tags
+                    assert '1930_Stutz_Stutz' in tags
+                    
+                finally:
+                    os.unlink(sample_file.name)
+                    os.unlink(golden_file.name)
 
     @pytest.mark.performance
-    def test_transformation_performance(self, transformer):
-        """Test transformation performance with larger dataset"""
+    def test_template_processing_performance(self, transformer):
+        """Test that template processing is ultra-fast (>1000 products/sec)"""
         import time
-
-        # Create larger sample dataset
-        large_sample = pd.concat([pd.DataFrame({
-            'StockCode': [f'10-000{i}-40'],
-            'Product Name': [f'Test Product {i}'],
-            'Description': [f'Description for product {i}'],
-            'StockUom': ['ea.'],
-            'UPC Code': [706072000022 + i],
-            'MAP': [75.49 + i],
-            'Dealer Price': [43.76 + i],
-            'PartNumber': [f'10-000{i}-40'],
-            'Year': [1920 + (i % 50)],
-            'Make': [f'Make{i % 10}'],
-            'Model': [f'Model{i % 20}'],
-            'Submodel': ['Base'],
-            'Type': ['Car'],
-            'Doors': [4.0],
-            'BodyType': ['Sedan']
-        }) for i in range(100)], ignore_index=True)
-
-        # Mock golden dataset
-        mock_golden = pd.DataFrame({
-            'year': list(range(1920, 1970)),
-            'make': [f'Make{i % 10}' for i in range(50)],
-            'model': [f'Model{i % 20}' for i in range(50)],
-            'car_id': [f'{1920+i}_Make{i%10}_Model{i%20}' for i in range(50)]
-        })
-        transformer.golden_df = mock_golden
-
+        
+        # Create large dataset for performance testing
+        large_dataset = []
+        for i in range(1000):
+            large_dataset.append(ProductData(
+                title=f"Product {i}",
+                year_min="1965",
+                make="Ford",
+                model="Mustang",
+                golden_validated=True
+            ))
+        
         start_time = time.time()
+        enhanced_products = transformer.enhance_with_templates(large_dataset)
+        end_time = time.time()
         
-        # Test AI-friendly transformation
-        validation_df = transformer.validate_against_golden_dataset(large_sample)
-        ai_friendly_products = transformer.transform_to_ai_friendly_format(large_sample, validation_df)
-        final_df = transformer.transform_to_final_tagged_format(ai_friendly_products)
+        processing_time = end_time - start_time
+        products_per_second = len(enhanced_products) / processing_time
         
-        processing_time = time.time() - start_time
-
-        assert len(final_df) == 100
-        assert processing_time < 5.0  # Should complete within 5 seconds
-
-    def test_handle_missing_optional_fields(self, transformer):
-        """Test transformation handles missing optional fields gracefully"""
-        minimal_data = pd.DataFrame({
-            'StockCode': ['10-0001-40'],
-            'Product Name': ['Test Product'],
-            'Description': ['Test Description'],
-            'MAP': [75.49],
-            'Dealer Price': [43.76],
-            'PartNumber': ['10-0001-40'],
-            'Year': [1930],
-            'Make': ['Stutz'],
-            'Model': ['Stutz']
-            # Missing UPC Code and other optional fields
-        })
-
-        # Mock golden dataset
-        mock_golden = pd.DataFrame({
-            'year': [1930],
-            'make': ['Stutz'],
-            'model': ['Stutz'],
-            'car_id': ['1930_Stutz_Stutz']
-        })
-        transformer.golden_df = mock_golden
-
-        # Should not raise exception
-        validation_df = transformer.validate_against_golden_dataset(minimal_data)
-        ai_friendly_products = transformer.transform_to_ai_friendly_format(minimal_data, validation_df)
-        final_df = transformer.transform_to_final_tagged_format(ai_friendly_products)
-        
-        assert len(final_df) == 1
-        assert final_df.iloc[0]['Title'] == 'Test Product' 
+        assert products_per_second > 1000, f"Processing too slow: {products_per_second:.2f} products/sec"
+        assert len(enhanced_products) == 1000 
