@@ -14,9 +14,13 @@ This demo showcases:
 from utils.steele_data_transformer import SteeleDataTransformer
 import time
 import pandas as pd
+from pathlib import Path
 
 def main():
     """Demo the NO-AI pipeline for Steele complete fitment data"""
+    
+    # Get the directory where this script is located (Steele directory)
+    steele_dir = Path(__file__).parent
     
     print("=" * 80)
     print("🚀 STEELE NO-AI PIPELINE DEMO")

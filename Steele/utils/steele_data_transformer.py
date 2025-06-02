@@ -7,7 +7,19 @@ from pydantic import BaseModel
 
 # Add project root to path for imports
 project_root = Path(__file__).parent.parent.parent
+steele_root = Path(__file__).parent.parent  # Steele directory
 sys.path.append(str(project_root))
+
+# Import product import requirements
+sys.path.append(str(project_root / "shared" / "data" / "product_import"))
+try:
+    # Try importing with the correct filename
+    exec(open(str(project_root / "shared" / "data" / "product_import" / "product_import-column-requirements.py")).read())
+    # Now cols_list and other variables are available
+except Exception as e:
+    print(f"Warning: Could not load product import requirements: {e}")
+    # Fallback to minimal columns
+    cols_list = ["Title", "Body HTML", "Vendor", "Tags", "Variant SKU", "Variant Price", "Variant Cost"]
 
 class ProductData(BaseModel):
     """Standard format for complete fitment data sources (NO AI)"""
@@ -104,7 +116,7 @@ class SteeleDataTransformer:
         Step 1: Load Steele sample data for processing.
         
         Args:
-            file_path: Path to the sample CSV file
+            file_path: Path to the sample CSV file (relative to Steele directory)
             
         Returns:
             DataFrame with loaded data
@@ -113,6 +125,10 @@ class SteeleDataTransformer:
             FileNotFoundError: If sample file doesn't exist
             ValueError: If data format is invalid
         """
+        # Convert relative path to absolute path from Steele directory
+        if not os.path.isabs(file_path):
+            file_path = str(steele_root / file_path)
+        
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"Sample data file not found: {file_path}")
         
@@ -312,15 +328,16 @@ class SteeleDataTransformer:
         
         return enhanced_products
     
-    def transform_to_final_tagged_format(self, enhanced_products: List[ProductData]) -> pd.DataFrame:
+    def transform_to_formatted_shopify_import(self, enhanced_products: List[ProductData]) -> pd.DataFrame:
         """
-        Step 4: Transform template-enhanced data to final Shopify format with tags (NO AI).
+        FORMATTED STEP: Transform template-enhanced data to complete Shopify import format.
+        Generates ALL 65 columns from product_import-column-requirements.py in correct order.
         
         Args:
             enhanced_products: List of template-enhanced ProductData
             
         Returns:
-            DataFrame in final Shopify import format
+            DataFrame in complete 65-column Shopify import format (FORMATTED STEP)
         """
         final_records = []
         
@@ -328,29 +345,141 @@ class SteeleDataTransformer:
             # Generate vehicle tags from existing fitment data
             vehicle_tag = self._generate_vehicle_tag(product_data)
             
-            final_record = {
-                'Title': product_data.title,
-                'Body HTML': product_data.body_html,
-                'Vendor': self.vendor_name,
-                'Tags': vehicle_tag,
-                'Variant SKU': product_data.mpn,
-                'Variant Price': product_data.price,
-                'Variant Cost': product_data.cost,
-                'Variant Barcode': '',  # To be populated if available
-                'Command': 'MERGE',
-                'Image Src': '',
-                'Image Command': 'MERGE', 
-                'Image Position': 1,
-                'Image Alt Text': product_data.title,
-                'Metafield: title_tag [string]': product_data.meta_title,
-                'Metafield: description_tag [string]': product_data.meta_description,
-                'Collection': product_data.collection,
-                'Product Type': product_data.product_type
-            }
+            # Create complete record with ALL columns from product_import requirements
+            final_record = {}
+            
+            # Populate each column in the exact order from cols_list
+            for col in cols_list:
+                if col == "ID":
+                    final_record[col] = ""  # Shopify will auto-generate
+                elif col == "Command":
+                    final_record[col] = "MERGE"
+                elif col == "Title":
+                    final_record[col] = product_data.title
+                elif col == "Body HTML":
+                    final_record[col] = product_data.body_html
+                elif col == "Vendor":
+                    final_record[col] = self.vendor_name
+                elif col == "Tags":
+                    final_record[col] = vehicle_tag
+                elif col == "Tags Command":
+                    final_record[col] = "MERGE"
+                elif col == "Category: ID":
+                    final_record[col] = ""
+                elif col == "Category: Name":
+                    final_record[col] = ""
+                elif col == "Category":
+                    final_record[col] = ""
+                elif col == "Custom Collections":
+                    final_record[col] = product_data.collection
+                elif col == "Smart Collections":
+                    final_record[col] = ""
+                elif col == "Image Type":
+                    final_record[col] = ""
+                elif col == "Image Src":
+                    final_record[col] = ""
+                elif col == "Image Command":
+                    final_record[col] = "MERGE"
+                elif col == "Image Position":
+                    final_record[col] = 1
+                elif col == "Image Width":
+                    final_record[col] = ""
+                elif col == "Image Height":
+                    final_record[col] = ""
+                elif col == "Image Alt Text":
+                    final_record[col] = product_data.title
+                elif col == "Variant Inventory Item ID":
+                    final_record[col] = ""
+                elif col == "Variant ID":
+                    final_record[col] = ""
+                elif col == "Variant Command":
+                    final_record[col] = "MERGE"
+                elif col == "Option1 Name":
+                    final_record[col] = ""
+                elif col == "Option1 Value":
+                    final_record[col] = ""
+                elif col == "Option2 Name":
+                    final_record[col] = ""
+                elif col == "Option2 Value":
+                    final_record[col] = ""
+                elif col == "Option3 Name":
+                    final_record[col] = ""
+                elif col == "Option3 Value":
+                    final_record[col] = ""
+                elif col == "Variant Position":
+                    final_record[col] = 1
+                elif col == "Variant SKU":
+                    final_record[col] = product_data.mpn
+                elif col == "Variant Barcode":
+                    final_record[col] = ""
+                elif col == "Variant Image":
+                    final_record[col] = ""
+                elif col == "Variant Weight":
+                    final_record[col] = ""
+                elif col == "Variant Weight Unit":
+                    final_record[col] = ""
+                elif col == "Variant Price":
+                    final_record[col] = product_data.price
+                elif col == "Variant Compare At Price":
+                    final_record[col] = ""
+                elif col == "Variant Taxable":
+                    final_record[col] = "TRUE"
+                elif col == "Variant Tax Code":
+                    final_record[col] = ""
+                elif col == "Variant Inventory Tracker":
+                    final_record[col] = "shopify"
+                elif col == "Variant Inventory Policy":
+                    final_record[col] = "deny"
+                elif col == "Variant Fulfillment Service":
+                    final_record[col] = "manual"
+                elif col == "Variant Requires Shipping":
+                    final_record[col] = "TRUE"
+                elif col == "Variant Inventory Qty":
+                    final_record[col] = 0
+                elif col == "Variant Inventory Adjust":
+                    final_record[col] = ""
+                elif col == "Variant Cost":
+                    final_record[col] = product_data.cost
+                elif col == "Variant HS Code":
+                    final_record[col] = ""
+                elif col == "Variant Country of Origin":
+                    final_record[col] = ""
+                elif col == "Variant Province of Origin":
+                    final_record[col] = ""
+                elif col == "Metafield: title_tag [string]":
+                    final_record[col] = product_data.meta_title
+                elif col == "Metafield: description_tag [string]":
+                    final_record[col] = product_data.meta_description
+                elif col == "Metafield: custom.engine_types [list.single_line_text_field]":
+                    final_record[col] = ""
+                elif col == "Metafield: mm-google-shopping.custom_product [boolean]":
+                    final_record[col] = ""
+                elif col.startswith("Variant Metafield: mm-google-shopping.custom_label_"):
+                    final_record[col] = ""
+                elif col == "Variant Metafield: mm-google-shopping.size_system [single_line_text_field]":
+                    final_record[col] = ""
+                elif col == "Variant Metafield: mm-google-shopping.size_type [single_line_text_field]":
+                    final_record[col] = ""
+                elif col == "Variant Metafield: mm-google-shopping.mpn [single_line_text_field]":
+                    final_record[col] = product_data.mpn
+                elif col == "Variant Metafield: mm-google-shopping.gender [single_line_text_field]":
+                    final_record[col] = ""
+                elif col == "Variant Metafield: mm-google-shopping.condition [single_line_text_field]":
+                    final_record[col] = "new"
+                elif col == "Variant Metafield: mm-google-shopping.age_group [single_line_text_field]":
+                    final_record[col] = ""
+                elif col == "Variant Metafield: harmonized_system_code [string]":
+                    final_record[col] = ""
+                elif col == "Metafield: mm-google-shopping.mpn [single_line_text_field]":
+                    final_record[col] = product_data.mpn
+                else:
+                    # Default empty value for any unmapped columns
+                    final_record[col] = ""
             
             final_records.append(final_record)
         
-        return pd.DataFrame(final_records)
+        # Create DataFrame with columns in exact order from cols_list
+        return pd.DataFrame(final_records, columns=cols_list)
     
     def process_complete_pipeline_no_ai(self, sample_file_path: str = "data/samples/steele_sample.csv") -> pd.DataFrame:
         """
@@ -385,9 +514,9 @@ class SteeleDataTransformer:
         enhanced_products = self.enhance_with_templates(standard_products)
         print(f"✅ Enhanced {len(enhanced_products)} products with templates")
         
-        print("🔄 Step 4: Converting to final tagged format...")
-        final_df = self.transform_to_final_tagged_format(enhanced_products)
-        print(f"✅ Generated final Shopify format with {len(final_df)} products")
+        print("🔄 Step 4: Converting to formatted Shopify import (65 columns)...")
+        final_df = self.transform_to_formatted_shopify_import(enhanced_products)
+        print(f"✅ Generated formatted Shopify import with {len(final_df)} products")
         
         print("")
         print("⚡ PERFORMANCE: Ultra-fast template-based processing (1000+ products/sec)")
@@ -431,7 +560,7 @@ class SteeleDataTransformer:
     
     def validate_output(self, df: pd.DataFrame) -> Dict[str, List[str]]:
         """
-        Validate transformed output against Shopify requirements.
+        Validate transformed output against complete Shopify requirements from product_import.
         
         Args:
             df: Transformed DataFrame to validate
@@ -445,19 +574,29 @@ class SteeleDataTransformer:
             'info': []
         }
         
-        # Check required columns
-        required_columns = [
-            'Title', 'Body HTML', 'Vendor', 'Tags', 'Variant Price', 'Variant Cost',
-            'Metafield: title_tag [string]', 'Metafield: description_tag [string]'
-        ]
+        # Check that we have ALL required columns in correct order
+        expected_columns = cols_list
+        actual_columns = list(df.columns)
         
-        missing_columns = set(required_columns) - set(df.columns)
-        if missing_columns:
-            validation_results['errors'].append(f"Missing required columns: {missing_columns}")
+        if actual_columns != expected_columns:
+            validation_results['errors'].append("Column order/set does not match product_import requirements")
+            missing_cols = set(expected_columns) - set(actual_columns)
+            extra_cols = set(actual_columns) - set(expected_columns)
+            if missing_cols:
+                validation_results['errors'].append(f"Missing columns: {missing_cols}")
+            if extra_cols:
+                validation_results['errors'].append(f"Extra columns: {extra_cols}")
         
         # Validate data quality
         if len(df) == 0:
             validation_results['errors'].append("Output DataFrame is empty")
+        
+        # Check required always fields have data
+        for col in ["Title", "Body HTML", "Vendor", "Tags"]:
+            if col in df.columns:
+                empty_count = df[col].isnull().sum() + (df[col] == "").sum()
+                if empty_count > 0:
+                    validation_results['warnings'].append(f"{empty_count} rows have empty {col}")
         
         # Check price fields
         if 'Variant Price' in df.columns:
@@ -471,8 +610,16 @@ class SteeleDataTransformer:
             if len(long_titles) > 0:
                 validation_results['warnings'].append(f"{len(long_titles)} meta titles exceed 60 characters")
         
+        # Check meta description lengths
+        if 'Metafield: description_tag [string]' in df.columns:
+            long_descriptions = df[df['Metafield: description_tag [string]'].str.len() > 160]
+            if len(long_descriptions) > 0:
+                validation_results['warnings'].append(f"{len(long_descriptions)} meta descriptions exceed 160 characters")
+        
         validation_results['info'].append(f"Processed {len(df)} products")
         validation_results['info'].append(f"Vendor: {self.vendor_name}")
+        validation_results['info'].append(f"Total columns: {len(df.columns)}")
+        validation_results['info'].append(f"Matches product_import requirements: {len(validation_results['errors']) == 0}")
         
         return validation_results
     
@@ -482,11 +629,15 @@ class SteeleDataTransformer:
         
         Args:
             df: DataFrame to save
-            output_path: Output file path
+            output_path: Output file path (relative to Steele directory)
             
         Returns:
             Path to saved file
         """
+        # Convert relative path to absolute path from Steele directory
+        if not os.path.isabs(output_path):
+            output_path = str(steele_root / output_path)
+        
         # Ensure output directory exists
         output_dir = os.path.dirname(output_path)
         if output_dir and not os.path.exists(output_dir):

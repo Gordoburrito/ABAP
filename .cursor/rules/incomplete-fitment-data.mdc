@@ -11,6 +11,7 @@ alwaysApply: false
 - Validate AI-extracted fitment data against golden master dataset
 - Ensure data quality through intelligent AI processing combined with golden master validation
 - Transform variable input structures into standardized format using AI assistance
+- **USE ALL COLUMNS from product_import-column-requirements.py in EXACT ORDER**
 
 ## CRITICAL PRINCIPLE: INCOMPLETE FITMENT DATA HANDLING
 **Key Understanding**: This rule set applies to vendors like REM who provide product data without explicit fitment columns:
@@ -18,6 +19,122 @@ alwaysApply: false
 - AI is REQUIRED to identify vehicle compatibility from text descriptions
 - Golden master validation confirms AI-extracted fitment accuracy
 - More AI usage but intelligent fitment extraction and validation
+- **OUTPUT MUST INCLUDE ALL 65 COLUMNS** from shared/data/product_import/product_import-column-requirements.py
+
+## SHOPIFY IMPORT REQUIREMENTS COMPLIANCE (FORMATTED STEP)
+
+### MANDATORY: Complete Column Set Implementation
+**CRITICAL REQUIREMENT**: All transformers MUST generate the **FORMATTED STEP** output with ALL columns from `shared/data/product_import/product_import-column-requirements.py` in the EXACT order specified, regardless of fitment completeness.
+
+```python
+# Import the complete column requirements
+exec(open(str(project_root / "shared" / "data" / "product_import" / "product_import-column-requirements.py")).read())
+# Now cols_list contains all 65 columns in correct order
+
+def transform_to_formatted_shopify_import(self, enhanced_products: List[ProductDataWithAIExtraction]) -> pd.DataFrame:
+    """FORMATTED STEP: Generate ALL 65 columns from product_import requirements in exact order"""
+    final_records = []
+    
+    for product_data in enhanced_products:
+        final_record = {}
+        
+        # Populate each column in exact order from cols_list
+        for col in cols_list:
+            if col == "ID":
+                final_record[col] = ""  # Shopify auto-generates
+            elif col == "Command":
+                final_record[col] = "MERGE"
+            elif col == "Title":
+                final_record[col] = product_data.title
+            elif col == "Body HTML":
+                final_record[col] = product_data.body_html
+            elif col == "Vendor":
+                final_record[col] = self.vendor_name
+            elif col == "Tags":
+                final_record[col] = self._generate_vehicle_tag_from_ai_extraction(product_data)
+            elif col == "Custom Collections":
+                final_record[col] = product_data.collection  # AI-enhanced categorization
+            elif col == "Variant SKU":
+                final_record[col] = product_data.mpn
+            elif col == "Variant Price":
+                final_record[col] = product_data.price
+            elif col == "Variant Cost":
+                final_record[col] = product_data.cost
+            elif col == "Metafield: title_tag [string]":
+                final_record[col] = product_data.meta_title  # AI-generated SEO
+            elif col == "Metafield: description_tag [string]":
+                final_record[col] = product_data.meta_description  # AI-generated SEO
+            elif col == "Metafield: custom.engine_types [list.single_line_text_field]":
+                final_record[col] = self._extract_engine_types_if_applicable(product_data)
+            elif col == "Variant Metafield: mm-google-shopping.mpn [single_line_text_field]":
+                final_record[col] = product_data.mpn
+            elif col == "Variant Metafield: mm-google-shopping.condition [single_line_text_field]":
+                final_record[col] = "new"
+            elif col == "Metafield: mm-google-shopping.mpn [single_line_text_field]":
+                final_record[col] = product_data.mpn
+            # ... map ALL other columns with appropriate defaults ...
+            else:
+                final_record[col] = ""  # Default empty for unmapped columns
+        
+        final_records.append(final_record)
+    
+    # Create DataFrame with columns in exact order from cols_list
+    return pd.DataFrame(final_records, columns=cols_list)
+
+def _generate_vehicle_tag_from_ai_extraction(self, product_data: ProductDataWithAIExtraction) -> str:
+    """Generate vehicle tags from AI-extracted fitment data"""
+    if (product_data.extraction_confidence >= 0.7 and 
+        product_data.golden_validated and
+        product_data.make != "UNKNOWN" and 
+        product_data.model != "UNKNOWN"):
+        
+        make = product_data.make.replace(' ', '_')
+        model = product_data.model.replace(' ', '_')
+        year = product_data.year_min if product_data.year_min != "1800" else ""
+        
+        if year:
+            return f"{year}_{make}_{model}"
+        else:
+            return f"{make}_{model}"
+    else:
+        return ""  # No tags for low-confidence or unvalidated extractions
+```
+
+### Column Categories for Incomplete Fitment Data:
+- **REQUIRED_ALWAYS**: Essential columns populated with AI-extracted/enhanced data
+- **REQUIRED_MULTI_VARIANTS**: For products with variants (empty for single variants)  
+- **REQUIRED_MANUAL**: Columns with logical defaults (`Command: MERGE`, etc.)
+- **NO_REQUIREMENTS**: Optional columns (empty unless AI extraction provides data)
+
+### Enhanced Validation for AI-Extracted Data:
+```python
+def validate_output_with_ai_metadata(self, df: pd.DataFrame) -> Dict[str, List[str]]:
+    """Validate output has ALL 65 columns plus AI extraction quality metrics"""
+    expected_columns = cols_list  # All 65 columns from requirements
+    actual_columns = list(df.columns)
+    
+    validation_results = {
+        'errors': [],
+        'warnings': [],
+        'info': []
+    }
+    
+    if actual_columns != expected_columns:
+        validation_results['errors'].append("Column order/set does not match product_import requirements")
+    
+    # Additional validation for AI-extracted data quality
+    if 'Tags' in df.columns:
+        ai_tagged_count = len(df[df['Tags'] != ''])
+        total_count = len(df)
+        tag_rate = ai_tagged_count / total_count if total_count > 0 else 0
+        
+        if tag_rate < 0.3:  # Less than 30% successfully tagged
+            validation_results['warnings'].append(f"Low AI extraction success rate: {tag_rate:.1%}")
+        else:
+            validation_results['info'].append(f"AI extraction success rate: {tag_rate:.1%}")
+    
+    return validation_results
+```
 
 ## DATA TRANSFORMATION PIPELINE STRUCTURE
 
@@ -304,7 +421,7 @@ def validate_ai_extracted_fitment_against_golden(extracted_fitment_list: List[Di
 #### AI-Friendly Format with Extracted Fitment:
 ```python
 class ProductDataWithAIExtraction(BaseModel):
-    """AI-friendly format for incomplete fitment data sources"""
+    """AI-friendly format for incomplete fitment data sources (with complete column output)"""
     title: str
     year_min: str = "1800"
     year_max: str = "1800"
@@ -314,10 +431,10 @@ class ProductDataWithAIExtraction(BaseModel):
     cost: float
     price: float
     body_html: str
-    collection: str = "Accessories"
+    collection: str = "Accessories"  # AI-enhanced categorization
     product_type: str = "Automotive Part"
-    meta_title: str = ""
-    meta_description: str = ""
+    meta_title: str = ""      # AI-generated SEO
+    meta_description: str = "" # AI-generated SEO
     
     # AI extraction metadata
     fitment_source: str = "ai_extracted"
@@ -326,6 +443,53 @@ class ProductDataWithAIExtraction(BaseModel):
     golden_validated: bool = False
     multiple_vehicles: bool = False
     extraction_method: str = "openai_gpt4"
+    
+    # Complete column generation requirement
+    def to_complete_shopify_format(self, vendor_name: str, cols_list: List[str]) -> Dict[str, str]:
+        """Generate complete Shopify format with ALL 65 columns"""
+        final_record = {}
+        
+        for col in cols_list:
+            if col == "Title":
+                final_record[col] = self.title
+            elif col == "Body HTML":
+                final_record[col] = self.body_html
+            elif col == "Vendor":
+                final_record[col] = vendor_name
+            elif col == "Tags":
+                final_record[col] = self._generate_ai_extracted_vehicle_tag()
+            elif col == "Custom Collections":
+                final_record[col] = self.collection
+            elif col == "Variant SKU":
+                final_record[col] = self.mpn
+            elif col == "Variant Price":
+                final_record[col] = self.price
+            elif col == "Variant Cost":
+                final_record[col] = self.cost
+            elif col == "Metafield: title_tag [string]":
+                final_record[col] = self.meta_title
+            elif col == "Metafield: description_tag [string]":
+                final_record[col] = self.meta_description
+            # ... ALL other 65 columns with appropriate defaults ...
+            else:
+                final_record[col] = ""
+        
+        return final_record
+    
+    def _generate_ai_extracted_vehicle_tag(self) -> str:
+        """Generate vehicle tags from AI-extracted fitment data"""
+        if (self.extraction_confidence >= 0.7 and 
+            self.golden_validated and
+            self.make != "UNKNOWN" and 
+            self.model != "UNKNOWN"):
+            
+            make = self.make.replace(' ', '_')
+            model = self.model.replace(' ', '_')
+            year = self.year_min if self.year_min != "1800" else ""
+            
+            return f"{year}_{make}_{model}" if year else f"{make}_{model}"
+        else:
+            return ""  # No tags for low-confidence extractions
 ```
 
 ### 4. VENDOR-SPECIFIC IMPLEMENTATION EXAMPLES
@@ -340,7 +504,7 @@ REM_COLUMN_MAPPING = {
 }
 
 def transform_rem_incomplete_fitment(input_file: str) -> pd.DataFrame:
-    """Transform REM data with AI fitment extraction (like transform_REM.py)"""
+    """Transform REM data with AI fitment extraction + complete 65-column output"""
     # Step 1: Load and clean vendor data
     vendor_df = pd.read_csv(input_file)
     vendor_df = vendor_df.rename(columns=REM_COLUMN_MAPPING)
@@ -366,8 +530,25 @@ def transform_rem_incomplete_fitment(input_file: str) -> pd.DataFrame:
     # Step 5: AI enhancement for categorization and SEO
     enhanced_products = enhance_with_comprehensive_ai(ai_friendly_products)
     
-    # Step 6: Generate final tagged format
-    return transform_to_final_tagged_format(enhanced_products)
+    # Step 6: Generate final format with ALL 65 columns (MANDATORY)
+    final_df = transform_to_complete_column_format(enhanced_products)
+    
+    return final_df
+
+def transform_to_complete_column_format(enhanced_products: List[ProductDataWithAIExtraction]) -> pd.DataFrame:
+    """Generate ALL 65 columns for REM with AI-extracted fitment data"""
+    # Import complete column requirements
+    exec(open(str(project_root / "shared" / "data" / "product_import" / "product_import-column-requirements.py")).read())
+    
+    final_records = []
+    
+    for product_data in enhanced_products:
+        # Use the model's complete format method
+        final_record = product_data.to_complete_shopify_format("REM", cols_list)
+        final_records.append(final_record)
+    
+    # Create DataFrame with ALL 65 columns in exact order
+    return pd.DataFrame(final_records, columns=cols_list)
 ```
 
 ### 5. AI USAGE STRATEGY (COMPREHENSIVE SCOPE)
@@ -521,6 +702,9 @@ VENDOR_COLUMN_MAPPING = {
 - **Extraction Success**: Expect 70-85% successful fitment extraction from descriptions
 - **Golden Validation Rate**: Expect 50-70% golden master validation (lower than complete fitment)
 - **Data Quality**: 80-90% accuracy with AI extraction + golden validation
+- **Column Generation**: ALL 65 columns generated (same as complete fitment data)
+- **Shopify Compliance**: 100% import ready with complete column set
+- **Output Performance**: Minimal overhead for complete column generation (template-based mapping)
 
 ### 10. DEVELOPMENT COMMANDS FOR INCOMPLETE FITMENT
 
