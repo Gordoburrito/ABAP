@@ -1,0 +1,7 @@
+.env
+data/*
+**/data*/
+**/data/
+**/batch_ids/
+*.csv
+**/*.csv
