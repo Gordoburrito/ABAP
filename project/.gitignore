@@ -1,7 +1,0 @@
-.env
-data/*
-**/data*/
-**/batch_ids/
-!data/samples/ 
-*.csv
-**/*.csv
