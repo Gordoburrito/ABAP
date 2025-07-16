@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional
 from pydantic import BaseModel
+from .ai_vehicle_matcher import AIVehicleMatcher
 
 # Add project root to path for imports
 project_root = Path(__file__).parent.parent.parent
@@ -103,10 +104,11 @@ class SteeleDataTransformer:
         Args:
             use_ai: ALWAYS False for complete fitment data like Steele
         """
-        self.use_ai = False  # NEVER use AI for complete fitment data
+        self.use_ai = True
         self.vendor_name = "Steele"
         self.golden_df = None
         self.template_generator = TemplateGenerator()
+        self.ai_matcher = AIVehicleMatcher(use_ai=True)  # Always enable AI for edge cases
         
         if use_ai:
             print("⚠️  WARNING: AI usage disabled for complete fitment data (Steele)")
@@ -313,7 +315,12 @@ class SteeleDataTransformer:
                 year = int(row['Year']) if pd.notna(row['Year']) else None
                 make = str(row['Make']) if pd.notna(row['Make']) else None
                 model = str(row['Model']) if pd.notna(row['Model']) else None
+                submodel = str(row['Submodel']) if pd.notna(row['Submodel']) else None
+                type = str(row['Type']) if pd.notna(row['Type']) else None
+                doors = str(row['Doors']) if pd.notna(row['Doors']) else None
+                body_type = str(row['BodyType']) if pd.notna(row['BodyType']) else None
                 
+
                 if year and make and model:
                     # Step 1: Try exact match (year + make + model)
                     exact_matches = self.golden_df[
@@ -337,7 +344,7 @@ class SteeleDataTransformer:
                             'match_type': 'exact'
                         })
                     else:
-                        # Step 2: Try year + make match, then fuzzy match model
+                        # Step 2: Try year + make match, then ai match model
                         year_make_matches = self.golden_df[
                             (self.golden_df['year'] == year) &
                             (self.golden_df['make'] == make)
@@ -360,11 +367,18 @@ class SteeleDataTransformer:
                                     'match_type': 'make_equals_model'
                                 })
                             else:
-                                # Try fuzzy matching for normal cases
-                                fuzzy_matches = self.fuzzy_match_car_id(year_make_matches, model, similarity_threshold=0.7)
+                                # Use AI to match models for year+make combination
+                                print("Using AI model matching for year+make matches")
+                                ai_matches = self.ai_matcher.ai_match_models_for_year_make(
+                                    year_make_matches,
+                                    model,
+                                    submodel,
+                                    type,
+                                    doors,
+                                    body_type
+                                )
                                 
-                                if len(fuzzy_matches) > 0:
-                                    # print("Fuzzy matches found:", fuzzy_matches[['year', 'make', 'model', 'car_id']])
+                                if len(ai_matches) > 0:
                                     validation_results.append({
                                         'steele_row_index': idx,
                                         'stock_code': row['StockCode'],
@@ -372,13 +386,12 @@ class SteeleDataTransformer:
                                         'make': make,
                                         'model': model,
                                         'golden_validated': True,
-                                        'golden_matches': len(fuzzy_matches),
-                                        'car_ids': fuzzy_matches['car_id'].unique().tolist(),
-                                        'match_type': 'fuzzy'
+                                        'golden_matches': len(ai_matches),
+                                        'car_ids': ai_matches['car_id'].unique().tolist(),
+                                        'match_type': 'ai_model_match'
                                     })
                                 else:
-                                    # No fuzzy matches found
-                                    # print("No fuzzy matches found for model:", model)
+                                    # AI matching failed, use fallback
                                     validation_results.append({
                                         'steele_row_index': idx,
                                         'stock_code': row['StockCode'],
@@ -388,24 +401,70 @@ class SteeleDataTransformer:
                                         'golden_validated': False,
                                         'golden_matches': 0,
                                         'car_ids': [],
-                                        'match_type': 'none',
-                                        'error': 'no_fuzzy_model_match'
+                                        'match_type': 'ai_model_match_failed'
                                     })
                         else:
-                            # No year+make matches found
-                            # print("No year+make matches found")
-                            validation_results.append({
-                                'steele_row_index': idx,
-                                'stock_code': row['StockCode'],
-                                'year': year,
-                                'make': make,
-                                'model': model,
-                                'golden_validated': False,
-                                'golden_matches': 0,
-                                'car_ids': [],
-                                'match_type': 'none',
-                                'error': 'no_year_make_match'
-                            })
+                            # No year+make matches found, try fuzzy make matching
+                            year_matches = self.golden_df[
+                                (self.golden_df['year'] == year)
+                            ]
+                            
+                            if len(year_matches) > 0:
+                                print("Trying fuzzy make matching for year-only matches")
+                                corrected_make = self.ai_matcher.fuzzy_match_make_for_year(
+                                    year_matches, make
+                                )
+                                
+                                if corrected_make:
+                                    # Re-run validation with corrected make
+                                    print(f"Re-validating with corrected make: {corrected_make}")
+                                    re_validation_result = self.ai_matcher.validate_with_corrected_make(
+                                        self.golden_df,
+                                        year,
+                                        corrected_make,
+                                        model,
+                                        submodel,
+                                        type,
+                                        doors,
+                                        body_type
+                                    )
+                                    
+                                    # Add Steele-specific fields to result
+                                    re_validation_result.update({
+                                        'steele_row_index': idx,
+                                        'stock_code': row['StockCode'],
+                                        'year': year,
+                                        'make': make,  # Keep original make for reference
+                                        'model': model
+                                    })
+                                    
+                                    validation_results.append(re_validation_result)
+                                else:
+                                    # Fuzzy make matching failed
+                                    validation_results.append({
+                                        'steele_row_index': idx,
+                                        'stock_code': row['StockCode'],
+                                        'year': year,
+                                        'make': make,
+                                        'model': model,
+                                        'golden_validated': False,
+                                        'golden_matches': 0,
+                                        'car_ids': [],
+                                        'match_type': 'fuzzy_make_match_failed'
+                                    })
+                            else:
+                                # No year matches at all
+                                validation_results.append({
+                                    'steele_row_index': idx,
+                                    'stock_code': row['StockCode'],
+                                    'year': year,
+                                    'make': make,
+                                    'model': model,
+                                    'golden_validated': False,
+                                    'golden_matches': 0,
+                                    'car_ids': [],
+                                    'match_type': 'no_year_match'
+                                })
                 else:
                     validation_results.append({
                         'steele_row_index': idx,
