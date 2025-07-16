@@ -11,28 +11,31 @@ def main():
     try:
         # Get the directory where this script is located (Steele directory)
         steele_dir = Path(__file__).parent
-        
+
         print("=" * 60)
         print("🚀 STEELE DATA TRANSFORMATION")
         print("   Following @completed-data.mdc rule")
         print("   NO AI • Template-Based • Ultra-Fast")
         print("=" * 60)
-        
+
         # Initialize transformer with NO AI
         transformer = SteeleDataTransformer(use_ai=False)
-        
-        # Process complete pipeline using templates only
-        final_df = transformer.process_complete_pipeline_no_ai()
-        
+
+        # For testing with small sample:
+        final_df = transformer.process_complete_pipeline_no_ai("data/samples/steele_test_1000.csv")
+
+        # # Or for full processing:
+        # final_df = transformer.process_complete_pipeline_no_ai("data/processed/steele_processed_complete.csv")
+
         # Save results with timestamp
         timestamp = time.strftime("%Y%m%d_%H%M%S")
         output_file = steele_dir / "data" / "transformed" / f"steele_transformed_{timestamp}.csv"
         os.makedirs(output_file.parent, exist_ok=True)
-        
+
         # Save the results
         final_df.to_csv(output_file, index=False)
         print(f"💾 Results saved to: {output_file}")
-        
+
         # Display summary
         print("")
         print("=" * 60)
@@ -42,7 +45,7 @@ def main():
         print(f"   Golden validated: {len(final_df[final_df.get('Tags', '') != ''])} products")
         print(f"   Output file: {output_file}")
         print("=" * 60)
-        
+
         return str(output_file)
 
     except Exception as e:

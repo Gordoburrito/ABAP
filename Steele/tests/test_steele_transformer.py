@@ -308,4 +308,178 @@ class TestSteeleDataTransformer:
         products_per_second = len(enhanced_products) / processing_time
         
         assert products_per_second > 1000, f"Processing too slow: {products_per_second:.2f} products/sec"
-        assert len(enhanced_products) == 1000 
+        assert len(enhanced_products) == 1000
+
+class TestFuzzyMatching:
+    """Test suite for fuzzy matching functionality"""
+    
+    @pytest.fixture
+    def transformer_with_golden(self):
+        """Transformer with loaded golden dataset"""
+        transformer = SteeleDataTransformer()
+        try:
+            transformer.load_golden_dataset()
+            return transformer
+        except FileNotFoundError:
+            pytest.skip("Golden dataset not available for testing")
+    
+    @pytest.fixture
+    def mock_golden_data(self):
+        """Mock golden dataset for isolated testing"""
+        return pd.DataFrame({
+            'year': [1930, 1930, 1933, 1933, 1933],
+            'make': ['Durant', 'Durant', 'Stutz', 'Stutz', 'Stutz'],
+            'model': ['Model 614', 'Model 617', 'Model SV-16', 'Model DV-32', 'Model LAA'],
+            'car_id': ['1930_Durant_Model 614', '1930_Durant_Model 617', 
+                      '1933_Stutz_Model SV-16', '1933_Stutz_Model DV-32', '1933_Stutz_Model LAA']
+        })
+    
+    def test_fuzzy_match_durant_model_6_14(self, transformer_with_golden):
+        """Test Durant Model 6-14 fuzzy matching to Model 614"""
+        test_data = pd.DataFrame([{
+            'StockCode': 'TEST001',
+            'Product Name': 'Test Part',
+            'Description': 'Test Description',
+            'MAP': 100.0,
+            'Dealer Price': 80.0,
+            'Year': 1930,
+            'Make': 'Durant',
+            'Model': 'Model 6-14',
+            'PartNumber': 'TEST001'
+        }])
+        
+        results = transformer_with_golden.validate_against_golden_dataset(test_data)
+        
+        assert len(results) == 1
+        result = results.iloc[0]
+        assert result['golden_validated'] == True
+        assert result['match_type'] == 'fuzzy'
+        assert '1930_Durant_Model 614' in result['car_ids']
+    
+    def test_fuzzy_match_make_equals_model_stutz(self, transformer_with_golden):
+        """Test Stutz case where make == model"""
+        test_data = pd.DataFrame([{
+            'StockCode': 'TEST002',
+            'Product Name': 'Test Stutz Part',
+            'Description': 'Test Description',
+            'MAP': 150.0,
+            'Dealer Price': 120.0,
+            'Year': 1933,
+            'Make': 'Stutz',
+            'Model': 'Stutz',
+            'PartNumber': 'TEST002'
+        }])
+        
+        results = transformer_with_golden.validate_against_golden_dataset(test_data)
+        
+        assert len(results) == 1
+        result = results.iloc[0]
+        assert result['golden_validated'] == True
+        assert result['match_type'] == 'make_equals_model'
+        # Should return all Stutz models for 1933
+        expected_car_ids = ['1933_Stutz_Model SV-16', '1933_Stutz_Model DV-32', '1933_Stutz_Model LAA']
+        for car_id in expected_car_ids:
+            assert car_id in result['car_ids']
+    
+    def test_exact_match_still_works(self, transformer_with_golden):
+        """Test that exact matching still takes precedence"""
+        test_data = pd.DataFrame([{
+            'StockCode': 'TEST003',
+            'Product Name': 'Test Part',
+            'Description': 'Test Description',
+            'MAP': 120.0,
+            'Dealer Price': 90.0,
+            'Year': 1930,
+            'Make': 'Durant',
+            'Model': 'Model 614',  # Exact match
+            'PartNumber': 'TEST003'
+        }])
+        
+        results = transformer_with_golden.validate_against_golden_dataset(test_data)
+        
+        assert len(results) == 1
+        result = results.iloc[0]
+        assert result['golden_validated'] == True
+        assert result['match_type'] == 'exact'
+        assert result['car_ids'] == ['1930_Durant_Model 614']
+    
+    def test_no_match_cases(self, transformer_with_golden):
+        """Test cases where no match should be found"""
+        test_data = pd.DataFrame([{
+            'StockCode': 'TEST004',
+            'Product Name': 'Test No Match Part',
+            'Description': 'Test Description',
+            'MAP': 100.0,
+            'Dealer Price': 80.0,
+            'Year': 2025,  # Future year
+            'Make': 'FakeMake',
+            'Model': 'FakeModel',
+            'PartNumber': 'TEST004'
+        }])
+        
+        results = transformer_with_golden.validate_against_golden_dataset(test_data)
+        
+        assert len(results) == 1
+        result = results.iloc[0]
+        assert result['golden_validated'] == False
+        assert result['match_type'] == 'none'
+        assert result['error'] == 'no_year_make_match'
+    
+    def test_fuzzy_matching_function_directly(self):
+        """Test the fuzzy matching function with mock data"""
+        transformer = SteeleDataTransformer()
+        
+        mock_data = pd.DataFrame({
+            'year': [1930, 1930],
+            'make': ['Durant', 'Durant'],
+            'model': ['Model 614', 'Model 617'],
+            'car_id': ['1930_Durant_Model 614', '1930_Durant_Model 617']
+        })
+        
+        # Test various input patterns
+        test_cases = [
+            ('Model 6-14', ['Model 614']),  # Should match 614
+            ('Model614', ['Model 614']),    # Should match 614
+            ('614', ['Model 614']),         # Should match 614
+            ('6-14', ['Model 614']),        # Should match 614
+            ('Model 617', ['Model 617']),   # Should match 617
+            ('617', ['Model 617']),         # Should match 617
+            ('Model XYZ', []),              # Should not match anything
+        ]
+        
+        for input_model, expected_models in test_cases:
+            result = transformer.fuzzy_match_car_id(mock_data, input_model, similarity_threshold=0.7)
+            actual_models = result['model'].tolist() if len(result) > 0 else []
+            assert actual_models == expected_models, f"Failed for input '{input_model}': expected {expected_models}, got {actual_models}"
+    
+    def test_fuzzy_matching_similarity_scoring(self):
+        """Test similarity scoring edge cases"""
+        transformer = SteeleDataTransformer()
+        
+        mock_data = pd.DataFrame({
+            'year': [1930],
+            'make': ['Test'],
+            'model': ['Model ABC'],
+            'car_id': ['1930_Test_Model ABC']
+        })
+        
+        # Test similarity thresholds
+        high_similarity_cases = [
+            'Model ABC',    # Exact match
+            'modelabc',     # Normalized exact match
+            'ABC',          # Substring match
+        ]
+        
+        for test_model in high_similarity_cases:
+            result = transformer.fuzzy_match_car_id(mock_data, test_model, similarity_threshold=0.9)
+            assert len(result) > 0, f"High similarity case '{test_model}' should match"
+        
+        # Test low similarity cases
+        low_similarity_cases = [
+            'XYZ',          # No similarity
+            'Model XYZ',    # Different letters
+        ]
+        
+        for test_model in low_similarity_cases:
+            result = transformer.fuzzy_match_car_id(mock_data, test_model, similarity_threshold=0.7)
+            assert len(result) == 0, f"Low similarity case '{test_model}' should not match" 

@@ -36,6 +36,7 @@ class ProductData(BaseModel):
     product_type: str = "Automotive Part"
     meta_title: str = ""     # Template-generated
     meta_description: str = "" # Template-generated
+    car_ids: List[str] = []  # Golden dataset car IDs for compatibility
     
     # Validation flags
     golden_validated: bool = False
@@ -183,6 +184,106 @@ class SteeleDataTransformer:
         except Exception as e:
             raise ValueError(f"Error loading golden dataset: {str(e)}")
     
+    def fuzzy_match_car_id(self, year_make_matches: pd.DataFrame, input_model: str, similarity_threshold: float = 0.6) -> pd.DataFrame:
+        """
+        Fuzzy match input model against golden dataset models for year+make matches.
+        
+        Args:
+            year_make_matches: DataFrame with year+make matches from golden dataset
+            input_model: Model string to match against
+            similarity_threshold: Minimum similarity score (0.0 to 1.0)
+            
+        Returns:
+            DataFrame with best fuzzy matches
+        """
+        if len(year_make_matches) == 0 or not input_model:
+            return pd.DataFrame()
+        
+        def normalize_model_string(model_str):
+            """Normalize model string for comparison"""
+            if pd.isna(model_str):
+                return ""
+            return str(model_str).lower().replace(" ", "").replace("-", "").replace("_", "")
+        
+        def calculate_similarity(str1, str2):
+            """Calculate similarity between two strings using multiple methods"""
+            str1_norm = normalize_model_string(str1)
+            str2_norm = normalize_model_string(str2)
+            
+            # Exact match after normalization
+            if str1_norm == str2_norm:
+                return 1.0
+            
+            # Substring match (normalized input in golden model)
+            # But avoid matching very short strings to everything
+            min_len = min(len(str1_norm), len(str2_norm))
+            if min_len >= 3 and (str1_norm in str2_norm or str2_norm in str1_norm):
+                return 0.9
+            
+            # Number extraction and comparison (for model numbers like "6-14" vs "614")
+            import re
+            numbers1 = re.findall(r'\d+', str1_norm)
+            numbers2 = re.findall(r'\d+', str2_norm)
+            if numbers1 and numbers2:
+                # Join numbers together to handle cases like "6-14" -> "614"
+                joined1 = ''.join(numbers1)
+                joined2 = ''.join(numbers2)
+                if joined1 == joined2:
+                    return 0.95  # Very high confidence for number match
+                # Check if main numbers match (less precise)
+                elif any(num1 in numbers2 or num2 in numbers1 for num1 in numbers1 for num2 in numbers2):
+                    return 0.8
+            
+            # Basic edit distance approximation
+            max_len = max(len(str1_norm), len(str2_norm))
+            if max_len == 0:
+                return 0.0
+            
+            # Count matching characters in order
+            matches = 0
+            i = j = 0
+            while i < len(str1_norm) and j < len(str2_norm):
+                if str1_norm[i] == str2_norm[j]:
+                    matches += 1
+                    i += 1
+                    j += 1
+                else:
+                    i += 1
+            
+            similarity = matches / max_len
+            
+            # Require at least 50% similarity for very different strings
+            if similarity < 0.5:
+                return 0.0
+                
+            return similarity
+        
+        # Calculate similarities
+        similarities = []
+        
+        for idx, row in year_make_matches.iterrows():
+            golden_model = row['model']
+            similarity = calculate_similarity(input_model, golden_model)
+            similarities.append({
+                'idx': idx,
+                'similarity': similarity,
+                'car_id': row['car_id'],
+                'model': golden_model
+            })
+        
+        # Filter by threshold and sort by similarity
+        good_matches = [s for s in similarities if s['similarity'] >= similarity_threshold]
+        good_matches.sort(key=lambda x: x['similarity'], reverse=True)
+        
+        # Return only the best match(es) - if there are ties, return all with highest score
+        if good_matches:
+            best_score = good_matches[0]['similarity']
+            best_matches_only = [m for m in good_matches if m['similarity'] == best_score]
+            best_matches_idx = [m['idx'] for m in best_matches_only]
+            return year_make_matches.loc[best_matches_idx].copy()
+        else:
+            return pd.DataFrame()
+    
     def validate_against_golden_dataset(self, steele_df: pd.DataFrame) -> pd.DataFrame:
         """
         Step 2b: Validate Steele vehicles against golden master dataset (ONLY CRITICAL STEP).
@@ -197,31 +298,114 @@ class SteeleDataTransformer:
             self.load_golden_dataset()
         
         validation_results = []
+
+        # Progress tracking for large datasets
+        total_rows = len(steele_df)
+        progress_interval = max(10000, total_rows // 100)  # Show progress every 1% or 10k rows
         
         for idx, row in steele_df.iterrows():
             try:
+                # Show progress for large datasets
+                if idx % progress_interval == 0:
+                    progress = (idx / total_rows) * 100
+                    print(f"   Processing... {progress:.1f}% ({idx:,}/{total_rows:,})")
+                
                 year = int(row['Year']) if pd.notna(row['Year']) else None
                 make = str(row['Make']) if pd.notna(row['Make']) else None
                 model = str(row['Model']) if pd.notna(row['Model']) else None
                 
                 if year and make and model:
-                    # Check if combination exists in golden dataset
-                    matches = self.golden_df[
+                    # Step 1: Try exact match (year + make + model)
+                    exact_matches = self.golden_df[
                         (self.golden_df['year'] == year) &
                         (self.golden_df['make'] == make) &
                         (self.golden_df['model'] == model)
                     ]
                     
-                    validation_results.append({
-                        'steele_row_index': idx,
-                        'stock_code': row['StockCode'],
-                        'year': year,
-                        'make': make,
-                        'model': model,
-                        'golden_validated': len(matches) > 0,
-                        'golden_matches': len(matches),
-                        'car_ids': matches['car_id'].unique().tolist() if len(matches) > 0 else []
-                    })
+                    if len(exact_matches) > 0:
+                        # Found exact match
+                        # Exact match found (debug output disabled)
+                        validation_results.append({
+                            'steele_row_index': idx,
+                            'stock_code': row['StockCode'],
+                            'year': year,
+                            'make': make,
+                            'model': model,
+                            'golden_validated': True,
+                            'golden_matches': len(exact_matches),
+                            'car_ids': exact_matches['car_id'].unique().tolist(),
+                            'match_type': 'exact'
+                        })
+                    else:
+                        # Step 2: Try year + make match, then fuzzy match model
+                        year_make_matches = self.golden_df[
+                            (self.golden_df['year'] == year) &
+                            (self.golden_df['make'] == make)
+                        ]
+                        # Year+Make matches processing (debug output disabled)
+                        
+                        if len(year_make_matches) > 0:
+                            # Special case: if make == model, return all year+make matches
+                            if make == model:
+                                # Special case: make == model (debug output disabled)
+                                validation_results.append({
+                                    'steele_row_index': idx,
+                                    'stock_code': row['StockCode'],
+                                    'year': year,
+                                    'make': make,
+                                    'model': model,
+                                    'golden_validated': True,
+                                    'golden_matches': len(year_make_matches),
+                                    'car_ids': year_make_matches['car_id'].unique().tolist(),
+                                    'match_type': 'make_equals_model'
+                                })
+                            else:
+                                # Try fuzzy matching for normal cases
+                                fuzzy_matches = self.fuzzy_match_car_id(year_make_matches, model, similarity_threshold=0.7)
+                                
+                                if len(fuzzy_matches) > 0:
+                                    # print("Fuzzy matches found:", fuzzy_matches[['year', 'make', 'model', 'car_id']])
+                                    validation_results.append({
+                                        'steele_row_index': idx,
+                                        'stock_code': row['StockCode'],
+                                        'year': year,
+                                        'make': make,
+                                        'model': model,
+                                        'golden_validated': True,
+                                        'golden_matches': len(fuzzy_matches),
+                                        'car_ids': fuzzy_matches['car_id'].unique().tolist(),
+                                        'match_type': 'fuzzy'
+                                    })
+                                else:
+                                    # No fuzzy matches found
+                                    # print("No fuzzy matches found for model:", model)
+                                    validation_results.append({
+                                        'steele_row_index': idx,
+                                        'stock_code': row['StockCode'],
+                                        'year': year,
+                                        'make': make,
+                                        'model': model,
+                                        'golden_validated': False,
+                                        'golden_matches': 0,
+                                        'car_ids': [],
+                                        'match_type': 'none',
+                                        'error': 'no_fuzzy_model_match'
+                                    })
+                        else:
+                            # No year+make matches found
+                            # print("No year+make matches found")
+                            validation_results.append({
+                                'steele_row_index': idx,
+                                'stock_code': row['StockCode'],
+                                'year': year,
+                                'make': make,
+                                'model': model,
+                                'golden_validated': False,
+                                'golden_matches': 0,
+                                'car_ids': [],
+                                'match_type': 'none',
+                                'error': 'no_year_make_match'
+                            })
                 else:
                     validation_results.append({
                         'steele_row_index': idx,
@@ -259,6 +443,7 @@ class SteeleDataTransformer:
         standard_products = []
         
         for idx, steele_row in steele_df.iterrows():
+            # print("steele_row", steele_row)
             # Get validation result for this row
             validation_row = validation_df[validation_df['steele_row_index'] == idx]
             is_validated = len(validation_row) > 0 and validation_row.iloc[0]['golden_validated']
@@ -268,8 +453,18 @@ class SteeleDataTransformer:
             make = str(steele_row['Make']) if pd.notna(steele_row['Make']) else "NONE"
             model = str(steele_row['Model']) if pd.notna(steele_row['Model']) else "NONE"
             
+            # Get car_ids from validation result
+            car_ids = []
+            if len(validation_row) > 0 and 'car_ids' in validation_row.columns:
+                car_ids_value = validation_row.iloc[0]['car_ids']
+                if isinstance(car_ids_value, list):
+                    car_ids = car_ids_value
+                elif pd.notna(car_ids_value):
+                    car_ids = [str(car_ids_value)]
+            
             product_data = ProductData(
                 title=str(steele_row['Product Name']),
+                car_ids=car_ids,
                 year_min=year,
                 year_max=year,  # Same year for Steele
                 make=make,
@@ -328,10 +523,120 @@ class SteeleDataTransformer:
         
         return enhanced_products
     
+    def _consolidate_products_by_sku(self, products: List[ProductData]) -> List[ProductData]:
+        """
+        Consolidate products by SKU, combining car_ids and creating year ranges.
+        
+        Args:
+            products: List of ProductData to consolidate
+            
+        Returns:
+            List of consolidated ProductData objects
+        """
+        sku_groups = {}
+        
+        # Group products by SKU
+        for product in products:
+            sku = product.mpn  # Using mpn as SKU
+            if sku not in sku_groups:
+                sku_groups[sku] = []
+            sku_groups[sku].append(product)
+        
+        consolidated = []
+        
+        for sku, group_products in sku_groups.items():
+            if len(group_products) == 1:
+                # Single product, no consolidation needed
+                consolidated.append(group_products[0])
+            else:
+                # Multiple products with same SKU - consolidate
+                base_product = group_products[0]  # Use first as template
+                
+                # Combine all car_ids and deduplicate
+                all_car_ids = []
+                for product in group_products:
+                    all_car_ids.extend(product.car_ids)
+                unique_car_ids = list(dict.fromkeys(all_car_ids))  # Preserves order while deduplicating
+                
+                # Extract years from car_ids for year range
+                years = set()
+                for car_id in unique_car_ids:
+                    if car_id and '_' in car_id:
+                        year_part = car_id.split('_')[0]
+                        if year_part.isdigit():
+                            years.add(int(year_part))
+                
+                # Determine year range
+                if years:
+                    min_year = str(min(years))
+                    max_year = str(max(years))
+                else:
+                    min_year = base_product.year_min
+                    max_year = base_product.year_max
+                
+                # Create consolidated product
+                consolidated_product = ProductData(
+                    title=base_product.title,
+                    year_min=min_year,
+                    year_max=max_year,
+                    make=base_product.make,
+                    model=base_product.model,
+                    mpn=base_product.mpn,
+                    cost=base_product.cost,
+                    price=base_product.price,
+                    body_html=base_product.body_html,
+                    collection=base_product.collection,
+                    product_type=base_product.product_type,
+                    meta_title=self._generate_consolidated_meta_title(base_product.title, min_year, max_year, unique_car_ids),
+                    meta_description=self._generate_consolidated_meta_description(base_product.title, min_year, max_year, unique_car_ids),
+                    car_ids=unique_car_ids,
+                    golden_validated=any(p.golden_validated for p in group_products),
+                    fitment_source=base_product.fitment_source,
+                    processing_method=base_product.processing_method
+                )
+                
+                consolidated.append(consolidated_product)
+        
+        return consolidated
+    
+    def _generate_consolidated_meta_title(self, title: str, min_year: str, max_year: str, car_ids: List[str]) -> str:
+        """Generate meta title for consolidated product"""
+        if min_year == max_year:
+            year_range = min_year
+        else:
+            year_range = f"{min_year}-{max_year}"
+        
+        # Count unique makes from car_ids
+        makes = set()
+        for car_id in car_ids:
+            if car_id and '_' in car_id:
+                parts = car_id.split('_')
+                if len(parts) >= 2:
+                    makes.add(parts[1])
+        
+        if len(makes) == 1:
+            make_text = list(makes)[0]
+        else:
+            make_text = "Multiple Makes"
+        
+        meta_title = f"{title} - {year_range} {make_text}"
+        return meta_title[:60] if len(meta_title) > 60 else meta_title
+    
+    def _generate_consolidated_meta_description(self, title: str, min_year: str, max_year: str, car_ids: List[str]) -> str:
+        """Generate meta description for consolidated product"""
+        if min_year == max_year:
+            year_range = min_year
+        else:
+            year_range = f"{min_year}-{max_year}"
+        
+        vehicle_count = len(car_ids)
+        meta_desc = f"Quality {title} compatible with {vehicle_count} vehicle models from {year_range}. OEM replacement part."
+        return meta_desc[:160] if len(meta_desc) > 160 else meta_desc
+    
     def transform_to_formatted_shopify_import(self, enhanced_products: List[ProductData]) -> pd.DataFrame:
         """
         FORMATTED STEP: Transform template-enhanced data to complete Shopify import format.
-        Generates ALL 65 columns from product_import-column-requirements.py in correct order.
+        Consolidates products by SKU and combines car_ids. Generates ALL 65 columns in correct order.
         
         Args:
             enhanced_products: List of template-enhanced ProductData
@@ -339,11 +644,14 @@ class SteeleDataTransformer:
         Returns:
             DataFrame in complete 65-column Shopify import format (FORMATTED STEP)
         """
+        # Step 1: Consolidate products by SKU
+        consolidated_products = self._consolidate_products_by_sku(enhanced_products)
+        
         final_records = []
         
-        for product_data in enhanced_products:
-            # Generate vehicle tags from existing fitment data
-            vehicle_tag = self._generate_vehicle_tag(product_data)
+        for product_data in consolidated_products:
+            # Generate vehicle tags from car_ids (comma-separated)
+            vehicle_tags = ", ".join(product_data.car_ids) if product_data.car_ids else ""
             
             # Create complete record with ALL columns from product_import requirements
             final_record = {}
@@ -361,7 +669,7 @@ class SteeleDataTransformer:
                 elif col == "Vendor":
                     final_record[col] = self.vendor_name
                 elif col == "Tags":
-                    final_record[col] = vehicle_tag
+                    final_record[col] = vehicle_tags
                 elif col == "Tags Command":
                     final_record[col] = "MERGE"
                 elif col == "Category: ID":
@@ -484,21 +792,21 @@ class SteeleDataTransformer:
     def process_complete_pipeline_no_ai(self, sample_file_path: str = "data/samples/steele_sample.csv") -> pd.DataFrame:
         """
         Execute complete NO-AI transformation pipeline following @completed-data.mdc:
-        Sample Data → Golden Master Validation → Template Enhancement → Final Format
+        Full Dataset → Golden Master Validation → Template Enhancement → SKU Consolidation → Final Format
         
         Args:
-            sample_file_path: Path to Steele sample data
+            sample_file_path: Path to Steele complete dataset
             
         Returns:
-            Final Shopify-ready DataFrame (template-based, ultra-fast)
+            Final consolidated Shopify-ready DataFrame (template-based, ultra-fast)
         """
         print("🚀 STEELE NO-AI PIPELINE (Following @completed-data.mdc)")
-        print("   Template-based processing for complete fitment data")
+        print("   Template-based processing for complete fitment data with SKU consolidation")
         print("")
         
-        print("🔄 Step 1: Loading Steele sample data...")
+        print("🔄 Step 1: Loading Steele complete dataset...")
         steele_df = self.load_sample_data(sample_file_path)
-        print(f"✅ Loaded {len(steele_df)} Steele products")
+        print(f"✅ Loaded {len(steele_df):,} Steele products from complete dataset")
         
         print("🔄 Step 2: Golden master validation (ONLY CRITICAL STEP)...")
         self.load_golden_dataset()
@@ -509,7 +817,7 @@ class SteeleDataTransformer:
         print("🔄 Step 3: Transform to standard format (preserving fitment)...")
         standard_products = self.transform_to_standard_format(steele_df, validation_df)
         print(f"✅ Transformed {len(standard_products)} products to standard format")
-        
+
         print("🔄 Step 3b: Template-based enhancement (NO AI)...")
         enhanced_products = self.enhance_with_templates(standard_products)
         print(f"✅ Enhanced {len(enhanced_products)} products with templates")
@@ -531,9 +839,7 @@ class SteeleDataTransformer:
             product_data.model != "NONE" and 
             product_data.year_min != "Unknown"):
             
-            make = product_data.make.replace(' ', '_')
-            model = product_data.model.replace(' ', '_')
-            return f"{product_data.year_min}_{make}_{model}"
+            return f"{product_data.year_min}_{product_data.make}_{product_data.model}"
         else:
             return ""
     
