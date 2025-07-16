@@ -80,7 +80,7 @@ def extract_product_data_with_ai(row: pd.Series, golden_df: pd.DataFrame, client
     """
 
     response = client.beta.chat.completions.parse(
-        model="gpt-4o-mini",
+        model="gpt-4.1-mini",
         messages=[
             {"role": "system", "content": "Extract the product information based on the valid options provided. Use 'ALL' for universal compatibility."},
             {"role": "user", "content": prompt}

@@ -26,7 +26,7 @@ Output must be in JSON format with a single field "vehicle_type" that is either 
 """
 
     response = client.beta.chat.completions.parse(
-        model="gpt-4o-mini",
+        model="gpt-4.1-mini",
         messages=[
             {"role": "system", "content": "Classify vehicles as either car or truck based on the provided details."},
             {"role": "user", "content": prompt}

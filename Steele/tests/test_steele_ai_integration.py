@@ -54,7 +54,7 @@ class TestSteeleAIIntegration:
         try:
             # Simple test call
             response = openai_client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-4.1-mini",
                 messages=[{"role": "user", "content": "Hello, this is a test."}],
                 max_tokens=10
             )
@@ -86,7 +86,7 @@ Output must be in JSON format with fields:
 """
 
             response = client.beta.chat.completions.parse(
-                model="gpt-4o-mini",
+                model="gpt-4.1-mini",
                 messages=[
                     {"role": "system", "content": "Classify vehicles as either car or truck."},
                     {"role": "user", "content": prompt}
@@ -134,7 +134,7 @@ Output in JSON format with fields:
 """
 
             response = client.beta.chat.completions.parse(
-                model="gpt-4o-mini",
+                model="gpt-4.1-mini",
                 messages=[
                     {"role": "system", "content": "Generate SEO metadata for automotive parts."},
                     {"role": "user", "content": prompt}
@@ -164,7 +164,7 @@ Output in JSON format with fields:
                 prompt = f"Classify {year} {make} {model} as car or truck. Respond with JSON containing vehicle_type, confidence, and reasoning."
                 
                 response = client.beta.chat.completions.parse(
-                    model="gpt-4o-mini",
+                    model="gpt-4.1-mini",
                     messages=[{"role": "user", "content": prompt}],
                     response_format=VehicleClassification,
                     temperature=0.1
@@ -258,7 +258,7 @@ Output in JSON format with fields:
             prompt = f"Classify {year} {make} {model} as car or truck."
             
             response = client.beta.chat.completions.parse(
-                model="gpt-4o-mini",
+                model="gpt-4.1-mini",
                 messages=[{"role": "user", "content": prompt}],
                 response_format=VehicleClassification,
                 temperature=0.0  # Very low temperature for consistency
@@ -297,7 +297,7 @@ Rules: Only classify as either car or truck"""
         estimated_output_tokens = 50  # For structured response
         
         # Rough cost estimation (as of 2024 pricing)
-        cost_per_1k_input_tokens = 0.00015  # gpt-4o-mini pricing
+        cost_per_1k_input_tokens = 0.00015  # gpt-4.1-mini pricing
         cost_per_1k_output_tokens = 0.0006
         
         estimated_cost = (

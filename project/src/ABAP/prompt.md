@@ -17,7 +17,7 @@ and much more!
 
 This cookbook will walk you through how to use the Batch API with a couple of practical examples.
 
-We will start with an example to categorize movies using gpt-4o-mini, and then cover how we can use the vision capabilities of this model to caption images.
+We will start with an example to categorize movies using gpt-4.1-mini, and then cover how we can use the vision capabilities of this model to caption images.
 
 Please note that multiple models are available through the Batch API, and that you can use the same parameters in your Batch API calls as with the Chat Completions endpoint.
 
@@ -31,7 +31,7 @@ from IPython.display import Image, display
 # Initializing OpenAI client - see https://platform.openai.com/docs/quickstart?context=python
 client = OpenAI()
 First example: Categorizing movies
-In this example, we will use gpt-4o-mini to extract movie categories from a description of the movie. We will also extract a 1-sentence summary from this description.
+In this example, we will use gpt-4.1-mini to extract movie categories from a description of the movie. We will also extract a 1-sentence summary from this description.
 
 We will use JSON mode to extract categories as an array of strings and the 1-sentence summary in a structured format.
 
@@ -74,7 +74,7 @@ Movies can have several categories, but try to keep it under 3-4. Only mention t
 
 def get_categories(description):
     response = client.chat.completions.create(
-    model="gpt-4o-mini",
+    model="gpt-4.1-mini",
     temperature=0.1,
     # This is to enable JSON mode, making sure responses are valid json objects
     response_format={ 
@@ -189,7 +189,7 @@ for index, row in df.iterrows():
         "url": "/v1/chat/completions",
         "body": {
             # This is what you would have in your Chat Completions API call
-            "model": "gpt-4o-mini",
+            "model": "gpt-4.1-mini",
             "temperature": 0.1,
             "response_format": { 
                 "type": "json_object"
