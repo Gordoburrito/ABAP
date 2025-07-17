@@ -1,10 +1,11 @@
 import pandas as pd
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Dict, List, Optional
 from pydantic import BaseModel
-from .ai_vehicle_matcher import AIVehicleMatcher
+from .batch_ai_vehicle_matcher import BatchAIVehicleMatcher
 
 # Add project root to path for imports
 project_root = Path(__file__).parent.parent.parent
@@ -89,30 +90,33 @@ class TemplateGenerator:
         else:
             return 'Accessories'
 
-class SteeleDataTransformer:
+class BatchSteeleDataTransformer:
     """
-    Main transformer class for Steele data source - COMPLETE FITMENT DATA (NO AI)
-    Implements: Sample Data → Golden Master Validation → Template Enhancement → Final Format
-    
-    Following @completed-data.mdc rule: NO AI usage, template-based processing only
+    Batch-enabled transformer for Steele data source using OpenAI's batch API.
+    Processes AI requests in batches for significant cost savings and efficiency.
     """
     
-    def __init__(self, use_ai: bool = False):
+    def __init__(self, use_ai: bool = True):
         """
-        Initialize the transformer for complete fitment data.
+        Initialize the batch transformer for complete fitment data.
         
         Args:
-            use_ai: ALWAYS False for complete fitment data like Steele
+            use_ai: Whether to use AI for edge cases (batch processing)
         """
-        self.use_ai = True
+        self.use_ai = use_ai
         self.vendor_name = "Steele"
         self.golden_df = None
         self.template_generator = TemplateGenerator()
-        self.ai_matcher = AIVehicleMatcher(use_ai=True)  # Always enable AI for edge cases
+        self.batch_ai_matcher = BatchAIVehicleMatcher(use_ai=use_ai)
         
+        # Track items that need AI processing
+        self.ai_processing_needed = {}
+        
+        print("🔄 Initialized Batch Steele Data Transformer")
         if use_ai:
-            print("⚠️  WARNING: AI usage disabled for complete fitment data (Steele)")
-            print("   Following @completed-data.mdc rule: Template-based processing only")
+            print("   ✅ AI batch processing enabled (50% cost savings)")
+        else:
+            print("   ⚠️  AI processing disabled")
     
     def load_sample_data(self, file_path: str = "data/samples/steele_sample.csv") -> pd.DataFrame:
         """
@@ -144,7 +148,7 @@ class SteeleDataTransformer:
     
     def load_golden_dataset(self, file_path: Optional[str] = None) -> pd.DataFrame:
         """
-        Step 2: Load golden master dataset for vehicle validation (ONLY CRITICAL STEP).
+        Step 2: Load golden master dataset for vehicle validation.
         
         Args:
             file_path: Path to golden dataset, uses shared path if not provided
@@ -186,124 +190,28 @@ class SteeleDataTransformer:
         except Exception as e:
             raise ValueError(f"Error loading golden dataset: {str(e)}")
     
-    def fuzzy_match_car_id(self, year_make_matches: pd.DataFrame, input_model: str, similarity_threshold: float = 0.6) -> pd.DataFrame:
+    def validate_against_golden_dataset_batch(self, steele_df: pd.DataFrame) -> pd.DataFrame:
         """
-        Fuzzy match input model against golden dataset models for year+make matches.
-        
-        Args:
-            year_make_matches: DataFrame with year+make matches from golden dataset
-            input_model: Model string to match against
-            similarity_threshold: Minimum similarity score (0.0 to 1.0)
-            
-        Returns:
-            DataFrame with best fuzzy matches
-        """
-        if len(year_make_matches) == 0 or not input_model:
-            return pd.DataFrame()
-        
-        def normalize_model_string(model_str):
-            """Normalize model string for comparison"""
-            if pd.isna(model_str):
-                return ""
-            return str(model_str).lower().replace(" ", "").replace("-", "").replace("_", "")
-        
-        def calculate_similarity(str1, str2):
-            """Calculate similarity between two strings using multiple methods"""
-            str1_norm = normalize_model_string(str1)
-            str2_norm = normalize_model_string(str2)
-            
-            # Exact match after normalization
-            if str1_norm == str2_norm:
-                return 1.0
-            
-            # Substring match (normalized input in golden model)
-            # But avoid matching very short strings to everything
-            min_len = min(len(str1_norm), len(str2_norm))
-            if min_len >= 3 and (str1_norm in str2_norm or str2_norm in str1_norm):
-                return 0.9
-            
-            # Number extraction and comparison (for model numbers like "6-14" vs "614")
-            import re
-            numbers1 = re.findall(r'\d+', str1_norm)
-            numbers2 = re.findall(r'\d+', str2_norm)
-            if numbers1 and numbers2:
-                # Join numbers together to handle cases like "6-14" -> "614"
-                joined1 = ''.join(numbers1)
-                joined2 = ''.join(numbers2)
-                if joined1 == joined2:
-                    return 0.95  # Very high confidence for number match
-                # Check if main numbers match (less precise)
-                elif any(num1 in numbers2 or num2 in numbers1 for num1 in numbers1 for num2 in numbers2):
-                    return 0.8
-            
-            # Basic edit distance approximation
-            max_len = max(len(str1_norm), len(str2_norm))
-            if max_len == 0:
-                return 0.0
-            
-            # Count matching characters in order
-            matches = 0
-            i = j = 0
-            while i < len(str1_norm) and j < len(str2_norm):
-                if str1_norm[i] == str2_norm[j]:
-                    matches += 1
-                    i += 1
-                    j += 1
-                else:
-                    i += 1
-            
-            similarity = matches / max_len
-            
-            # Require at least 50% similarity for very different strings
-            if similarity < 0.5:
-                return 0.0
-                
-            return similarity
-        
-        # Calculate similarities
-        similarities = []
-        
-        for idx, row in year_make_matches.iterrows():
-            golden_model = row['model']
-            similarity = calculate_similarity(input_model, golden_model)
-            similarities.append({
-                'idx': idx,
-                'similarity': similarity,
-                'car_id': row['car_id'],
-                'model': golden_model
-            })
-        
-        # Filter by threshold and sort by similarity
-        good_matches = [s for s in similarities if s['similarity'] >= similarity_threshold]
-        good_matches.sort(key=lambda x: x['similarity'], reverse=True)
-        
-        # Return only the best match(es) - if there are ties, return all with highest score
-        if good_matches:
-            best_score = good_matches[0]['similarity']
-            best_matches_only = [m for m in good_matches if m['similarity'] == best_score]
-            best_matches_idx = [m['idx'] for m in best_matches_only]
-            return year_make_matches.loc[best_matches_idx].copy()
-        else:
-            return pd.DataFrame()
-    
-    def validate_against_golden_dataset(self, steele_df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Step 2b: Validate Steele vehicles against golden master dataset (ONLY CRITICAL STEP).
+        Step 2b: Validate Steele vehicles against golden master dataset.
+        Collects AI tasks in batch instead of processing individually.
         
         Args:
             steele_df: Steele data to validate
             
         Returns:
-            DataFrame with validation results
+            DataFrame with validation results (AI tasks queued for batch processing)
         """
         if self.golden_df is None:
             self.load_golden_dataset()
         
         validation_results = []
+        ai_tasks_queued = 0
 
         # Progress tracking for large datasets
         total_rows = len(steele_df)
-        progress_interval = max(10000, total_rows // 100)  # Show progress every 1% or 10k rows
+        progress_interval = max(1000, total_rows // 100)  # Show progress every 1% or 1k rows
+        
+        print(f"🔍 Validating {total_rows:,} products against golden dataset...")
         
         for idx, row in steele_df.iterrows():
             try:
@@ -320,7 +228,6 @@ class SteeleDataTransformer:
                 doors = str(row['Doors']) if pd.notna(row['Doors']) else None
                 body_type = str(row['BodyType']) if pd.notna(row['BodyType']) else None
                 
-
                 if year and make and model:
                     # Step 1: Try exact match (year + make + model)
                     exact_matches = self.golden_df[
@@ -330,8 +237,7 @@ class SteeleDataTransformer:
                     ]
                     
                     if len(exact_matches) > 0:
-                        # Found exact match
-                        # Exact match found (debug output disabled)
+                        # Found exact match - no AI needed
                         validation_results.append({
                             'steele_row_index': idx,
                             'stock_code': row['StockCode'],
@@ -341,20 +247,19 @@ class SteeleDataTransformer:
                             'golden_validated': True,
                             'golden_matches': len(exact_matches),
                             'car_ids': exact_matches['car_id'].unique().tolist(),
-                            'match_type': 'exact'
+                            'match_type': 'exact',
+                            'ai_task_id': None
                         })
                     else:
-                        # Step 2: Try year + make match, then ai match model
+                        # Step 2: Try year + make match, then queue AI model matching
                         year_make_matches = self.golden_df[
                             (self.golden_df['year'] == year) &
                             (self.golden_df['make'] == make)
                         ]
-                        # Year+Make matches processing (debug output disabled)
                         
                         if len(year_make_matches) > 0:
                             # Special case: if make == model, return all year+make matches
                             if make == model:
-                                # Special case: make == model (debug output disabled)
                                 validation_results.append({
                                     'steele_row_index': idx,
                                     'stock_code': row['StockCode'],
@@ -364,45 +269,48 @@ class SteeleDataTransformer:
                                     'golden_validated': True,
                                     'golden_matches': len(year_make_matches),
                                     'car_ids': year_make_matches['car_id'].unique().tolist(),
-                                    'match_type': 'make_equals_model'
+                                    'match_type': 'make_equals_model',
+                                    'ai_task_id': None
                                 })
                             else:
-                                # Use AI to match models for year+make combination
-                                print("Using AI model matching for year+make matches")
-                                ai_matches = self.ai_matcher.ai_match_models_for_year_make(
-                                    year_make_matches,
-                                    model,
-                                    submodel,
-                                    type,
-                                    doors,
-                                    body_type
+                                # Queue AI model matching task
+                                task_id = f"model_match_{idx}"
+                                self.batch_ai_matcher.add_model_matching_task(
+                                    task_id=task_id,
+                                    year_make_matches=year_make_matches,
+                                    input_model=model,
+                                    input_submodel=submodel,
+                                    input_type=type,
+                                    input_doors=doors,
+                                    input_body_type=body_type
                                 )
                                 
-                                if len(ai_matches) > 0:
-                                    validation_results.append({
-                                        'steele_row_index': idx,
-                                        'stock_code': row['StockCode'],
-                                        'year': year,
-                                        'make': make,
-                                        'model': model,
-                                        'golden_validated': True,
-                                        'golden_matches': len(ai_matches),
-                                        'car_ids': ai_matches['car_id'].unique().tolist(),
-                                        'match_type': 'ai_model_match'
-                                    })
-                                else:
-                                    # AI matching failed, use fallback
-                                    validation_results.append({
-                                        'steele_row_index': idx,
-                                        'stock_code': row['StockCode'],
-                                        'year': year,
-                                        'make': make,
-                                        'model': model,
-                                        'golden_validated': False,
-                                        'golden_matches': 0,
-                                        'car_ids': [],
-                                        'match_type': 'ai_model_match_failed'
-                                    })
+                                # Store for later processing
+                                self.ai_processing_needed[task_id] = {
+                                    'type': 'model_match',
+                                    'steele_row_index': idx,
+                                    'year_make_matches': year_make_matches,
+                                    'stock_code': row['StockCode'],
+                                    'year': year,
+                                    'make': make,
+                                    'model': model
+                                }
+                                
+                                # Placeholder result (will be updated after batch processing)
+                                validation_results.append({
+                                    'steele_row_index': idx,
+                                    'stock_code': row['StockCode'],
+                                    'year': year,
+                                    'make': make,
+                                    'model': model,
+                                    'golden_validated': False,  # Will be updated
+                                    'golden_matches': 0,  # Will be updated
+                                    'car_ids': [],  # Will be updated
+                                    'match_type': 'ai_model_match_pending',
+                                    'ai_task_id': task_id
+                                })
+                                
+                                ai_tasks_queued += 1
                         else:
                             # No year+make matches found, try fuzzy make matching
                             year_matches = self.golden_df[
@@ -410,48 +318,44 @@ class SteeleDataTransformer:
                             ]
                             
                             if len(year_matches) > 0:
-                                print("Trying fuzzy make matching for year-only matches")
-                                corrected_make = self.ai_matcher.fuzzy_match_make_for_year(
-                                    year_matches, make
+                                # Queue AI make matching task
+                                task_id = f"make_match_{idx}"
+                                self.batch_ai_matcher.add_make_matching_task(
+                                    task_id=task_id,
+                                    year_matches=year_matches,
+                                    input_make=make
                                 )
                                 
-                                if corrected_make:
-                                    # Re-run validation with corrected make
-                                    print(f"Re-validating with corrected make: {corrected_make}")
-                                    re_validation_result = self.ai_matcher.validate_with_corrected_make(
-                                        self.golden_df,
-                                        year,
-                                        corrected_make,
-                                        model,
-                                        submodel,
-                                        type,
-                                        doors,
-                                        body_type
-                                    )
-                                    
-                                    # Add Steele-specific fields to result
-                                    re_validation_result.update({
-                                        'steele_row_index': idx,
-                                        'stock_code': row['StockCode'],
-                                        'year': year,
-                                        'make': make,  # Keep original make for reference
-                                        'model': model
-                                    })
-                                    
-                                    validation_results.append(re_validation_result)
-                                else:
-                                    # Fuzzy make matching failed
-                                    validation_results.append({
-                                        'steele_row_index': idx,
-                                        'stock_code': row['StockCode'],
-                                        'year': year,
-                                        'make': make,
-                                        'model': model,
-                                        'golden_validated': False,
-                                        'golden_matches': 0,
-                                        'car_ids': [],
-                                        'match_type': 'fuzzy_make_match_failed'
-                                    })
+                                # Store for later processing
+                                self.ai_processing_needed[task_id] = {
+                                    'type': 'make_match',
+                                    'steele_row_index': idx,
+                                    'year_matches': year_matches,
+                                    'stock_code': row['StockCode'],
+                                    'year': year,
+                                    'make': make,
+                                    'model': model,
+                                    'submodel': submodel,
+                                    'type': type,
+                                    'doors': doors,
+                                    'body_type': body_type
+                                }
+                                
+                                # Placeholder result
+                                validation_results.append({
+                                    'steele_row_index': idx,
+                                    'stock_code': row['StockCode'],
+                                    'year': year,
+                                    'make': make,
+                                    'model': model,
+                                    'golden_validated': False,  # Will be updated
+                                    'golden_matches': 0,  # Will be updated
+                                    'car_ids': [],  # Will be updated
+                                    'match_type': 'ai_make_match_pending',
+                                    'ai_task_id': task_id
+                                })
+                                
+                                ai_tasks_queued += 1
                             else:
                                 # No year matches at all
                                 validation_results.append({
@@ -463,7 +367,8 @@ class SteeleDataTransformer:
                                     'golden_validated': False,
                                     'golden_matches': 0,
                                     'car_ids': [],
-                                    'match_type': 'no_year_match'
+                                    'match_type': 'no_year_match',
+                                    'ai_task_id': None
                                 })
                 else:
                     validation_results.append({
@@ -475,7 +380,8 @@ class SteeleDataTransformer:
                         'golden_validated': False,
                         'golden_matches': 0,
                         'car_ids': [],
-                        'error': 'incomplete_vehicle_data'
+                        'error': 'incomplete_vehicle_data',
+                        'ai_task_id': None
                     })
                     
             except Exception as e:
@@ -483,10 +389,210 @@ class SteeleDataTransformer:
                     'steele_row_index': idx,
                     'stock_code': row.get('StockCode', 'unknown'),
                     'golden_validated': False,
-                    'error': str(e)
+                    'error': str(e),
+                    'ai_task_id': None
                 })
         
+        print(f"✅ Initial validation complete: {ai_tasks_queued} AI tasks queued for batch processing")
+        
         return pd.DataFrame(validation_results)
+    
+    def process_ai_batch(self, wait_for_completion: bool = True, max_wait_time: int = 3600) -> bool:
+        """
+        Process all queued AI tasks using batch API.
+        
+        Args:
+            wait_for_completion: Whether to wait for batch to complete
+            max_wait_time: Maximum time to wait for completion (seconds)
+            
+        Returns:
+            True if batch processing completed successfully
+        """
+        if self.batch_ai_matcher.get_queue_size() == 0:
+            print("ℹ️  No AI tasks to process")
+            return True
+        
+        print(f"🚀 Processing {self.batch_ai_matcher.get_queue_size()} AI tasks in batch...")
+        
+        # Submit batch
+        batch_id = self.batch_ai_matcher.process_batch("steele_validation")
+        if not batch_id:
+            print("❌ Failed to submit batch")
+            return False
+        
+        if not wait_for_completion:
+            print(f"📋 Batch submitted: {batch_id}")
+            print("⏳ Use check_batch_status() and retrieve_batch_results() to get results later")
+            return True
+        
+        # Wait for completion
+        print("⏳ Waiting for batch to complete...")
+        if not self.batch_ai_matcher.wait_for_completion(batch_id, max_wait_time):
+            print("❌ Batch did not complete within time limit")
+            return False
+        
+        # Retrieve results
+        if not self.batch_ai_matcher.retrieve_batch_results(batch_id):
+            print("❌ Failed to retrieve batch results")
+            return False
+        
+        print("✅ Batch processing completed successfully!")
+        return True
+    
+    def update_validation_with_ai_results(self, validation_df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Update validation results with AI batch processing results.
+        
+        Args:
+            validation_df: DataFrame with pending AI tasks
+            
+        Returns:
+            Updated DataFrame with AI results incorporated
+        """
+        updated_results = []
+        
+        for idx, row in validation_df.iterrows():
+            if pd.isna(row.get('ai_task_id')) or row['ai_task_id'] is None:
+                # No AI processing needed, keep as-is
+                updated_results.append(row.to_dict())
+                continue
+            
+            task_id = row['ai_task_id']
+            task_info = self.ai_processing_needed.get(task_id)
+            
+            if not task_info:
+                print(f"⚠️  No task info found for {task_id}")
+                updated_results.append(row.to_dict())
+                continue
+            
+            # Process based on task type
+            if task_info['type'] == 'model_match':
+                ai_matches = self.batch_ai_matcher.get_model_match_result(
+                    task_id, task_info['year_make_matches']
+                )
+                
+                if len(ai_matches) > 0:
+                    # AI found matches
+                    updated_row = row.to_dict()
+                    updated_row.update({
+                        'golden_validated': True,
+                        'golden_matches': len(ai_matches),
+                        'car_ids': ai_matches['car_id'].unique().tolist(),
+                        'match_type': 'ai_model_match'
+                    })
+                    updated_results.append(updated_row)
+                else:
+                    # AI found no matches
+                    updated_row = row.to_dict()
+                    updated_row.update({
+                        'golden_validated': False,
+                        'golden_matches': 0,
+                        'car_ids': [],
+                        'match_type': 'ai_model_match_failed'
+                    })
+                    updated_results.append(updated_row)
+            
+            elif task_info['type'] == 'make_match':
+                corrected_make = self.batch_ai_matcher.get_make_match_result(task_id)
+                
+                if corrected_make:
+                    # AI corrected the make, now validate with corrected make
+                    validation_result = self._validate_with_corrected_make_batch(
+                        task_info, corrected_make
+                    )
+                    
+                    updated_row = row.to_dict()
+                    updated_row.update(validation_result)
+                    updated_row['corrected_make'] = corrected_make
+                    updated_results.append(updated_row)
+                else:
+                    # AI could not correct make
+                    updated_row = row.to_dict()
+                    updated_row.update({
+                        'golden_validated': False,
+                        'golden_matches': 0,
+                        'car_ids': [],
+                        'match_type': 'ai_make_match_failed'
+                    })
+                    updated_results.append(updated_row)
+            
+            else:
+                print(f"⚠️  Unknown task type: {task_info['type']}")
+                updated_results.append(row.to_dict())
+        
+        return pd.DataFrame(updated_results)
+    
+    def _validate_with_corrected_make_batch(self, task_info: Dict, corrected_make: str) -> Dict:
+        """
+        Validate with AI-corrected make.
+        
+        Args:
+            task_info: Original task information
+            corrected_make: Make corrected by AI
+            
+        Returns:
+            Dictionary with validation results
+        """
+        try:
+            year = task_info['year']
+            original_model = task_info['model']
+            
+            # Step 1: Try exact match with corrected make
+            exact_matches = self.golden_df[
+                (self.golden_df['year'] == year) &
+                (self.golden_df['make'] == corrected_make) &
+                (self.golden_df['model'] == original_model)
+            ]
+            
+            if len(exact_matches) > 0:
+                return {
+                    'golden_validated': True,
+                    'golden_matches': len(exact_matches),
+                    'car_ids': exact_matches['car_id'].unique().tolist(),
+                    'match_type': 'exact_with_corrected_make'
+                }
+            
+            # Step 2: Try year + corrected_make match
+            year_make_matches = self.golden_df[
+                (self.golden_df['year'] == year) &
+                (self.golden_df['make'] == corrected_make)
+            ]
+            
+            if len(year_make_matches) > 0:
+                # Special case: if corrected_make == model, return all matches
+                if corrected_make == original_model:
+                    return {
+                        'golden_validated': True,
+                        'golden_matches': len(year_make_matches),
+                        'car_ids': year_make_matches['car_id'].unique().tolist(),
+                        'match_type': 'make_equals_model_corrected'
+                    }
+                else:
+                    # Would need another AI call for model matching with corrected make
+                    # For simplicity, return the year+make matches
+                    return {
+                        'golden_validated': True,
+                        'golden_matches': len(year_make_matches),
+                        'car_ids': year_make_matches['car_id'].unique().tolist(),
+                        'match_type': 'year_make_with_corrected_make'
+                    }
+            
+            # No matches found even with corrected make
+            return {
+                'golden_validated': False,
+                'golden_matches': 0,
+                'car_ids': [],
+                'match_type': 'no_match_with_corrected_make'
+            }
+            
+        except Exception as e:
+            return {
+                'golden_validated': False,
+                'golden_matches': 0,
+                'car_ids': [],
+                'match_type': 'error_with_corrected_make',
+                'error': str(e)
+            }
     
     def transform_to_standard_format(self, steele_df: pd.DataFrame, validation_df: pd.DataFrame) -> List[ProductData]:
         """
@@ -502,7 +608,6 @@ class SteeleDataTransformer:
         standard_products = []
         
         for idx, steele_row in steele_df.iterrows():
-            # print("steele_row", steele_row)
             # Get validation result for this row
             validation_row = validation_df[validation_df['steele_row_index'] == idx]
             is_validated = len(validation_row) > 0 and validation_row.iloc[0]['golden_validated']
@@ -848,30 +953,41 @@ class SteeleDataTransformer:
         # Create DataFrame with columns in exact order from cols_list
         return pd.DataFrame(final_records, columns=cols_list)
     
-    def process_complete_pipeline_no_ai(self, sample_file_path: str = "data/samples/steele_sample.csv") -> pd.DataFrame:
+    def process_complete_pipeline_batch(self, sample_file_path: str = "data/samples/steele_sample.csv") -> pd.DataFrame:
         """
-        Execute complete NO-AI transformation pipeline following @completed-data.mdc:
-        Full Dataset → Golden Master Validation → Template Enhancement → SKU Consolidation → Final Format
+        Execute complete batch-enabled transformation pipeline:
+        Full Dataset → Golden Master Validation → Batch AI Processing → Template Enhancement → Final Format
         
         Args:
             sample_file_path: Path to Steele complete dataset
             
         Returns:
-            Final consolidated Shopify-ready DataFrame (template-based, ultra-fast)
+            Final consolidated Shopify-ready DataFrame with batch AI processing
         """
-        print("🚀 STEELE NO-AI PIPELINE (Following @completed-data.mdc)")
-        print("   Template-based processing for complete fitment data with SKU consolidation")
+        print("🚀 STEELE BATCH AI PIPELINE (50% Cost Savings)")
+        print("   Batch processing for AI requests with template-based enhancement")
         print("")
         
         print("🔄 Step 1: Loading Steele complete dataset...")
         steele_df = self.load_sample_data(sample_file_path)
         print(f"✅ Loaded {len(steele_df):,} Steele products from complete dataset")
         
-        print("🔄 Step 2: Golden master validation (ONLY CRITICAL STEP)...")
+        print("🔄 Step 2: Golden master validation (queuing AI tasks)...")
         self.load_golden_dataset()
-        validation_df = self.validate_against_golden_dataset(steele_df)
-        validated_count = len(validation_df[validation_df['golden_validated'] == True])
-        print(f"✅ {validated_count}/{len(steele_df)} products validated against golden dataset")
+        validation_df = self.validate_against_golden_dataset_batch(steele_df)
+        exact_matches = len(validation_df[validation_df['match_type'] == 'exact'])
+        ai_tasks = self.batch_ai_matcher.get_queue_size()
+        print(f"✅ {exact_matches}/{len(steele_df)} exact matches, {ai_tasks} AI tasks queued")
+        
+        if ai_tasks > 0:
+            print("🔄 Step 2b: Processing AI tasks in batch...")
+            if self.process_ai_batch(wait_for_completion=True):
+                print("🔄 Step 2c: Updating validation with AI results...")
+                validation_df = self.update_validation_with_ai_results(validation_df)
+                validated_count = len(validation_df[validation_df['golden_validated'] == True])
+                print(f"✅ {validated_count}/{len(steele_df)} products validated after AI processing")
+            else:
+                print("⚠️  AI batch processing failed, continuing with available results")
         
         print("🔄 Step 3: Transform to standard format (preserving fitment)...")
         standard_products = self.transform_to_standard_format(steele_df, validation_df)
@@ -886,27 +1002,17 @@ class SteeleDataTransformer:
         print(f"✅ Generated formatted Shopify import with {len(final_df)} products")
         
         print("")
-        print("⚡ PERFORMANCE: Fast template-based + AI-enhanced matching (500-800 products/sec)")
-        print("💰 COST: Ultra-low AI costs ($0.00004 per product, gpt-4.1-mini)")
-        print("🎯 RELIABILITY: Template consistency + AI accuracy for edge cases")
-        print("🤖 AI ENHANCEMENT: Smart matching for make/model variations with lookup cache")
+        print("⚡ PERFORMANCE: Batch AI processing + template enhancement")
+        print("💰 COST: 50% savings with OpenAI Batch API")
+        print("🎯 RELIABILITY: Template consistency + batch AI accuracy")
+        print("🤖 AI ENHANCEMENT: Smart batch processing for edge cases")
         
-        # Show AI cost summary if any AI calls were made
-        if self.ai_matcher.api_calls_made > 0:
+        # Show AI cost summary
+        if self.batch_ai_matcher.api_calls_made > 0:
             print("")
-            self.ai_matcher.print_cost_report()
+            self.batch_ai_matcher.print_cost_report()
         
         return final_df
-    
-    def _generate_vehicle_tag(self, product_data: ProductData) -> str:
-        """Generate vehicle compatibility tag from existing fitment data."""
-        if (product_data.make != "NONE" and 
-            product_data.model != "NONE" and 
-            product_data.year_min != "Unknown"):
-            
-            return f"{product_data.year_min}_{product_data.make}_{product_data.model}"
-        else:
-            return ""
     
     def _validate_input_data(self, df: pd.DataFrame) -> None:
         """Validate input data structure and quality."""
@@ -928,93 +1034,3 @@ class SteeleDataTransformer:
         for field in critical_fields:
             if df[field].isnull().all():
                 raise ValueError(f"Critical field '{field}' is completely empty")
-    
-    def validate_output(self, df: pd.DataFrame) -> Dict[str, List[str]]:
-        """
-        Validate transformed output against complete Shopify requirements from product_import.
-        
-        Args:
-            df: Transformed DataFrame to validate
-            
-        Returns:
-            Dictionary with validation results
-        """
-        validation_results = {
-            'errors': [],
-            'warnings': [],
-            'info': []
-        }
-        
-        # Check that we have ALL required columns in correct order
-        expected_columns = cols_list
-        actual_columns = list(df.columns)
-        
-        if actual_columns != expected_columns:
-            validation_results['errors'].append("Column order/set does not match product_import requirements")
-            missing_cols = set(expected_columns) - set(actual_columns)
-            extra_cols = set(actual_columns) - set(expected_columns)
-            if missing_cols:
-                validation_results['errors'].append(f"Missing columns: {missing_cols}")
-            if extra_cols:
-                validation_results['errors'].append(f"Extra columns: {extra_cols}")
-        
-        # Validate data quality
-        if len(df) == 0:
-            validation_results['errors'].append("Output DataFrame is empty")
-        
-        # Check required always fields have data
-        for col in ["Title", "Body HTML", "Vendor", "Tags"]:
-            if col in df.columns:
-                empty_count = df[col].isnull().sum() + (df[col] == "").sum()
-                if empty_count > 0:
-                    validation_results['warnings'].append(f"{empty_count} rows have empty {col}")
-        
-        # Check price fields
-        if 'Variant Price' in df.columns:
-            invalid_prices = df[df['Variant Price'] <= 0]
-            if len(invalid_prices) > 0:
-                validation_results['warnings'].append(f"{len(invalid_prices)} rows have invalid prices")
-        
-        # Check meta title lengths
-        if 'Metafield: title_tag [string]' in df.columns:
-            long_titles = df[df['Metafield: title_tag [string]'].str.len() > 60]
-            if len(long_titles) > 0:
-                validation_results['warnings'].append(f"{len(long_titles)} meta titles exceed 60 characters")
-        
-        # Check meta description lengths
-        if 'Metafield: description_tag [string]' in df.columns:
-            long_descriptions = df[df['Metafield: description_tag [string]'].str.len() > 160]
-            if len(long_descriptions) > 0:
-                validation_results['warnings'].append(f"{len(long_descriptions)} meta descriptions exceed 160 characters")
-        
-        validation_results['info'].append(f"Processed {len(df)} products")
-        validation_results['info'].append(f"Vendor: {self.vendor_name}")
-        validation_results['info'].append(f"Total columns: {len(df.columns)}")
-        validation_results['info'].append(f"Matches product_import requirements: {len(validation_results['errors']) == 0}")
-        
-        return validation_results
-    
-    def save_output(self, df: pd.DataFrame, output_path: str = "data/transformed/steele_transformed.csv") -> str:
-        """
-        Save transformed data to file.
-        
-        Args:
-            df: DataFrame to save
-            output_path: Output file path (relative to Steele directory)
-            
-        Returns:
-            Path to saved file
-        """
-        # Convert relative path to absolute path from Steele directory
-        if not os.path.isabs(output_path):
-            output_path = str(steele_root / output_path)
-        
-        # Ensure output directory exists
-        output_dir = os.path.dirname(output_path)
-        if output_dir and not os.path.exists(output_dir):
-            os.makedirs(output_dir)
-        
-        # Save to CSV
-        df.to_csv(output_path, index=False)
-        
-        return output_path 

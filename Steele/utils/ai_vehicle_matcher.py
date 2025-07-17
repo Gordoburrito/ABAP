@@ -49,12 +49,12 @@ class AIVehicleMatcher:
             # Add more as needed
         }
         
-        # Cost tracking for GPT-4.1-mini
+        # Cost tracking for gpt-4.1-mini
         self.total_input_tokens = 0
         self.total_output_tokens = 0
         self.api_calls_made = 0
         
-        # GPT-4.1-mini pricing (per 1M tokens)
+        # gpt-4.1-mini pricing (per 1M tokens)
         self.input_cost_per_1m = 0.40  # $0.40 per 1M input tokens
         self.output_cost_per_1m = 1.60  # $1.60 per 1M output tokens
         
@@ -758,7 +758,7 @@ Rules: Use exact car_ids from options. Confidence 0.5-1.0. Include all reasonabl
 
         current = self.get_cost_estimate()
         
-        print("💰 AI COST REPORT (GPT-4.1-mini)")
+        print("💰 AI COST REPORT (gpt-4.1-mini)")
         print("=" * 40)
         print(f"API Calls Made: {current['api_calls']:,}")
         print(f"Input Tokens: {current['input_tokens']:,}")
