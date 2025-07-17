@@ -21,9 +21,9 @@ def main():
         # Initialize transformer with NO AI
         transformer = SteeleDataTransformer(use_ai=False)
 
-        final_df = transformer.process_complete_pipeline_no_ai()
+        # final_df = transformer.process_complete_pipeline_no_ai()
         # For testing with small sample:
-        # final_df = transformer.process_complete_pipeline_no_ai("data/samples/steele_test_1000.csv")
+        final_df = transformer.process_complete_pipeline_no_ai("data/samples/steele_test_1000.csv")
 
         # # Or for full processing:
         # final_df = transformer.process_complete_pipeline_no_ai("data/processed/steele_processed_complete.csv")
