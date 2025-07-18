@@ -482,7 +482,18 @@ class BatchSteeleDataTransformer:
                     })
                     updated_results.append(updated_row)
                 else:
-                    # AI found no matches
+                    # AI found no matches - add debug output
+                    print(f"⚠️  AI returned empty matches for {task_id}")
+                    print(f"    Input year: {task_info.get('year', 'unknown')}")
+                    print(f"    Input make: {task_info.get('make', 'unknown')}")
+                    print(f"    Input model: {task_info.get('model', 'unknown')}")
+                    if 'year_make_matches' in task_info and len(task_info['year_make_matches']) > 0:
+                        available_models = task_info['year_make_matches']['model'].unique()
+                        print(f"    Available models: {list(available_models)}")
+                        print(f"    Available car_ids: {list(task_info['year_make_matches']['car_id'].unique())}")
+                    else:
+                        print(f"    No year_make_matches available in task_info")
+                    
                     updated_row = row.to_dict()
                     updated_row.update({
                         'golden_validated': False,

@@ -406,11 +406,26 @@ RESPONSE: Just the make name or "NO_MATCH" (no explanation needed)"""
             print(f"   Selected car_ids: {result.selected_car_ids}")
             print(f"   Confidence: {result.confidence}")
             
+            # 🔧 ADD DEBUG CODE FOR EMPTY RESULTS
+            if len(result.selected_car_ids) == 0:
+                print(f"   ⚠️  EMPTY RESULT - Debugging...")
+                print(f"   Available car_ids in year_make_matches:")
+                for idx, row in year_make_matches.iterrows():
+                    print(f"      • {row['car_id']}: {row['model']}")
+                print(f"   This suggests the AI prompt needs improvement or confidence threshold is too high")
+                
+                # Show AI response for debugging
+                print(f"   Raw AI response: {content}")
+            
             # Filter year_make_matches to only selected car_ids
             selected_matches = year_make_matches[year_make_matches['car_id'].isin(result.selected_car_ids)]
             
+            if len(selected_matches) == 0 and len(result.selected_car_ids) > 0:
+                print(f"⚠️  AI selected car_ids not found in year_make_matches: {result.selected_car_ids}")
+                return pd.DataFrame()
+            
             if len(selected_matches) == 0:
-                print(f"⚠️  AI selected no valid car_ids for {task_id}")
+                print(f"✋ Found 0 matches for {task_id} (AI confidence: {result.confidence})")
                 return pd.DataFrame()
             
             print(f"✅ Found {len(selected_matches)} matches for {task_id}")
