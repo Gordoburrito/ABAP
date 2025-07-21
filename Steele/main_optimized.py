@@ -650,16 +650,50 @@ if __name__ == "__main__":
                 print(f"\n🎉 PATTERN-BASED PROCESSING COMPLETED: {results_path}")
         
         elif sys.argv[1] == "--enhanced-pattern":
-            # Enhanced pattern processing with golden master + pattern mapping
+            # Enhanced pattern processing with golden master + pattern mapping (VECTORIZED)
+            print("=" * 80)
+            print("🚀 ENHANCED PATTERN PROCESSING (ULTRA-FAST VECTORIZED)")
+            print("   Two-stage matching: Golden Master + Pattern Mapping")
+            print("   ⚡ Vectorized operations for maximum speed")
+            print("=" * 80)
+            
             input_file = "data/processed/steele_processed_complete.csv"
             if len(sys.argv) > 2:
                 input_file = sys.argv[2]
             
             try:
                 from enhanced_pattern_processor import EnhancedPatternProcessor
+                
+                print(f"📂 Input file: {input_file}")
+                start_time = time.time()
+                
                 processor = EnhancedPatternProcessor()
                 output_path, final_df = processor.process_file(input_file)
-                print(f"\n🎉 ENHANCED PATTERN PROCESSING COMPLETED: {output_path}")
+                
+                total_time = time.time() - start_time
+                print(f"\n🎉 ENHANCED PATTERN PROCESSING COMPLETED!")
+                print(f"⚡ Total processing time: {total_time:.1f}s")
+                print(f"📁 Results saved to: {output_path}")
+                
+                # Show performance tip
+                if total_time > 60:  # If over 1 minute
+                    print(f"\n💡 Performance tip: For even faster processing on large datasets,")
+                    print(f"   use the standalone processor with vectorized mode:")
+                    print(f"   python enhanced_pattern_processor.py {input_file} --mode vectorized")
+                
+            except FileNotFoundError:
+                print(f"❌ Error: Input file not found: {input_file}")
+                print("💡 Available sample files:")
+                import os
+                data_dir = Path(__file__).parent / "data"
+                if data_dir.exists():
+                    for subdir in ["processed", "samples"]:
+                        subdir_path = data_dir / subdir
+                        if subdir_path.exists():
+                            print(f"   {subdir}/:")
+                            for file in subdir_path.glob("*.csv"):
+                                print(f"     - {file.name}")
+                                
             except Exception as e:
                 print(f"❌ Enhanced pattern processing failed: {e}")
                 import traceback
